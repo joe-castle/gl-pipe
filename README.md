@@ -126,7 +126,7 @@ The project explorer only syncs projects from an instance's `default_groups` —
 | Key | Action |
 |---|---|
 | `x` | Stage/unstage a pipeline for a bulk action |
-| `Enter` | View the job matrix for the highlighted pipeline |
+| `Enter` | View job matrices for the staged pipelines together, or just the highlighted one if none are staged |
 | `R` | Bulk retry the staged (or highlighted) pipeline(s) |
 | `K` | Bulk cancel the staged (or highlighted) pipeline(s) |
 | `s` | Cycle the sort column (Date → Project → Status → Ref → SHA → Author → Duration) |
@@ -143,6 +143,8 @@ Sorted by Date, newest first, by default.
 | `R` | Bulk retry the staged (or highlighted) job(s) |
 | `K` | Bulk cancel the staged (or highlighted) job(s) |
 | `Esc` | Back to the pipeline matrix |
+
+Showing jobs from more than one pipeline adds `Project` and `Pipeline` (`#IID`) columns so you can tell which job belongs to which run.
 
 ### Pipeline trigger modal
 

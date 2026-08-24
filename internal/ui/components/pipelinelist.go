@@ -12,10 +12,11 @@ import (
 	"github.com/joeca/gl-pipe/internal/api"
 )
 
-// OpenJobsMsg asks the root model to load the job matrix for one pipeline.
+// OpenJobsMsg asks the root model to load the job matrix for one or more
+// pipelines (the staged, or highlighted-fallback, pipelines from the
+// matrix — same convention as batch triggering).
 type OpenJobsMsg struct {
-	ProjectID  int
-	PipelineID int
+	Pipelines []api.Pipeline
 }
 
 // OpenLogsMsg asks the root model to open the live log viewer for one job.
@@ -94,8 +95,8 @@ type PipelineList struct {
 
 	jobs      []api.Job
 	jobTable  table.Model
-	Pipeline  api.Pipeline
-	SelectedJ map[int]bool // job ID -> staged for bulk action
+	Pipelines []api.Pipeline // the pipeline(s) whose jobs are currently shown
+	SelectedJ map[int]bool   // job ID -> staged for bulk action
 
 	width, height int
 }
@@ -115,12 +116,14 @@ func NewPipelineList() PipelineList {
 
 	jobCols := []table.Column{
 		{Title: "", Width: 3},
-		{Title: "Stage", Width: 14},
-		{Title: "Job", Width: 24},
+		{Title: "Project", Width: 18},
+		{Title: "Pipeline", Width: 9},
+		{Title: "Stage", Width: 12},
+		{Title: "Job", Width: 20},
 		{Title: "Status", Width: 12},
-		{Title: "Runner", Width: 14},
-		{Title: "Retries", Width: 8},
-		{Title: "Duration", Width: 10},
+		{Title: "Runner", Width: 12},
+		{Title: "Retries", Width: 7},
+		{Title: "Duration", Width: 9},
 	}
 	jobTable := table.New(table.WithColumns(jobCols), table.WithFocused(true), table.WithHeight(15))
 
@@ -314,16 +317,65 @@ func (p *PipelineList) SelectedPipelines() []api.Pipeline {
 	return out
 }
 
-// SetJobs enters job-matrix mode for the given pipeline.
-func (p *PipelineList) SetJobs(pipeline api.Pipeline, jobs []api.Job) {
-	p.Pipeline = pipeline
-	p.jobs = jobs
+// FindPipeline looks up a pipeline already known to the matrix by ID.
+func (p *PipelineList) FindPipeline(id int) (api.Pipeline, bool) {
+	for _, pl := range p.pipelines {
+		if pl.ID == id {
+			return pl, true
+		}
+	}
+	return api.Pipeline{}, false
+}
+
+// ClearJobs resets the job matrix and enters job-matrix mode, ready for
+// AddJobs calls to fill it in — mirrors how SetPipelines(nil) then
+// AddOrUpdate is used to build up the multi-project pipeline matrix.
+func (p *PipelineList) ClearJobs() {
+	p.jobs = nil
+	p.Pipelines = nil
 	p.mode = modeJobs
 	p.SelectedJ = map[int]bool{}
 	p.syncJobRows()
 }
 
+// AddJobs merges one pipeline's jobs into the matrix (insert-or-update by
+// job ID), and records that pipeline as part of the current view if it
+// isn't already — this is how the job matrix can show several pipelines,
+// from the same or different projects, at once.
+func (p *PipelineList) AddJobs(pipeline api.Pipeline, jobs []api.Job) {
+	known := false
+	for _, existing := range p.Pipelines {
+		if existing.ID == pipeline.ID {
+			known = true
+			break
+		}
+	}
+	if !known {
+		p.Pipelines = append(p.Pipelines, pipeline)
+	}
+	for _, j := range jobs {
+		p.upsertJob(j)
+	}
+	p.mode = modeJobs
+	p.syncJobRows()
+}
+
+func (p *PipelineList) upsertJob(j api.Job) {
+	for i, existing := range p.jobs {
+		if existing.ID == j.ID {
+			p.jobs[i] = j
+			return
+		}
+	}
+	p.jobs = append(p.jobs, j)
+}
+
 func (p *PipelineList) syncJobRows() {
+	byID := make(map[int]api.Pipeline, len(p.Pipelines))
+	for _, pl := range p.Pipelines {
+		byID[pl.ID] = pl
+	}
+
 	rows := make([]table.Row, len(p.jobs))
 	for i, j := range p.jobs {
 		check := " "
@@ -334,7 +386,21 @@ func (p *PipelineList) syncJobRows() {
 		if j.RetryCount > 0 {
 			retries = fmt.Sprint(j.RetryCount)
 		}
-		rows[i] = table.Row{check, j.Stage, j.Name, string(j.Status), j.RunnerTag, retries, formatDuration(j.Duration)}
+		pipelineLabel := "-"
+		if pl, ok := byID[j.PipelineID]; ok {
+			pipelineLabel = fmt.Sprintf("#%d", pl.IID)
+		}
+		rows[i] = table.Row{
+			check,
+			p.projectNames[j.ProjectID],
+			pipelineLabel,
+			j.Stage,
+			j.Name,
+			string(j.Status),
+			j.RunnerTag,
+			retries,
+			formatDuration(j.Duration),
+		}
 	}
 	setRows(&p.jobTable, rows)
 }
@@ -385,12 +451,11 @@ func (p PipelineList) Update(msg tea.Msg) (PipelineList, tea.Cmd) {
 				}
 				return p, nil
 			case "enter":
-				if pl, ok := p.HighlightedPipeline(); ok {
-					return p, func() tea.Msg {
-						return OpenJobsMsg{ProjectID: pl.ProjectID, PipelineID: pl.ID}
-					}
+				targets := p.SelectedPipelines()
+				if len(targets) == 0 {
+					return p, nil
 				}
-				return p, nil
+				return p, func() tea.Msg { return OpenJobsMsg{Pipelines: targets} }
 			case "R", "K":
 				targets := p.SelectedPipelines()
 				retry := km.String() == "R"
@@ -437,7 +502,14 @@ func (p PipelineList) Update(msg tea.Msg) (PipelineList, tea.Cmd) {
 
 func (p PipelineList) View() string {
 	if p.mode == modeJobs {
-		header := fmt.Sprintf("Jobs for pipeline #%d (%s) — %d staged\n", p.Pipeline.IID, p.Pipeline.Ref, len(p.SelectedJ))
+		var header string
+		switch len(p.Pipelines) {
+		case 1:
+			pl := p.Pipelines[0]
+			header = fmt.Sprintf("Jobs for pipeline #%d (%s) — %d staged\n", pl.IID, pl.Ref, len(p.SelectedJ))
+		default:
+			header = fmt.Sprintf("Jobs for %d pipelines — %d staged\n", len(p.Pipelines), len(p.SelectedJ))
+		}
 		return lipgloss.NewStyle().Render(header + p.jobTable.View())
 	}
 	dir := "↓"

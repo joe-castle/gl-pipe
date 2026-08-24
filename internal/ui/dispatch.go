@@ -222,6 +222,25 @@ func (m Model) openPipelinesForSelected() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// openJobsForPipelines shows job matrices for one or more pipelines
+// together, same "clear once, merge as each completes" pattern as
+// openPipelinesForSelected.
+func (m Model) openJobsForPipelines(pipelines []api.Pipeline) (tea.Model, tea.Cmd) {
+	if len(pipelines) == 0 {
+		return m, nil
+	}
+	id := m.newReqID()
+	m.genJobs = id
+	m.loading = true
+	m.pipelineList.ClearJobs()
+
+	cmds := make([]tea.Cmd, 0, len(pipelines))
+	for _, pl := range pipelines {
+		cmds = append(cmds, jobsForPipelineCmd(m.ctx, m.client, pl.ProjectID, pl.ID, id))
+	}
+	return m, tea.Batch(cmds...)
+}
+
 // saveChosenGroups merges the discovery picker's selection into the active
 // instance's default_groups (additive: existing groups are kept even if
 // not re-selected this time), persists config, and triggers a resync.
@@ -310,9 +329,9 @@ func (m Model) bulkJobAction(msg components.BulkJobActionMsg) (tea.Model, tea.Cm
 	for _, j := range msg.Targets {
 		id := m.newReqID()
 		if msg.Retry {
-			cmds = append(cmds, retryJobCmd(m.ctx, m.client, j.ProjectID, j.ID, id))
+			cmds = append(cmds, retryJobCmd(m.ctx, m.client, j.ProjectID, j.PipelineID, j.ID, id))
 		} else {
-			cmds = append(cmds, cancelJobCmd(m.ctx, m.client, j.ProjectID, j.ID, id))
+			cmds = append(cmds, cancelJobCmd(m.ctx, m.client, j.ProjectID, j.PipelineID, j.ID, id))
 		}
 	}
 	m.loading = true

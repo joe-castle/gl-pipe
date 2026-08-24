@@ -373,10 +373,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setErr(msg.err)
 			return m, nil
 		}
-		if pl, ok := m.pipelineList.HighlightedPipeline(); ok && pl.ID == msg.pipelineID {
-			m.pipelineList.SetJobs(pl, msg.jobs)
-		} else {
-			m.pipelineList.SetJobs(m.pipelineList.Pipeline, msg.jobs)
+		if pl, ok := m.pipelineList.FindPipeline(msg.pipelineID); ok {
+			m.pipelineList.AddJobs(pl, msg.jobs)
 		}
 		return m, nil
 
@@ -385,15 +383,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setErr(msg.err)
 			return m, nil
 		}
-		id := m.newReqID()
-		m.genJobs = id
-		return m, jobsForPipelineCmd(m.ctx, m.client, msg.projectID, m.pipelineList.Pipeline.ID, id)
+		// Refresh just this one pipeline's jobs within the current
+		// generation — AddJobs merges the refreshed statuses back in
+		// without disturbing any other pipeline already shown.
+		return m, jobsForPipelineCmd(m.ctx, m.client, msg.projectID, msg.pipelineID, m.genJobs)
 
 	case components.OpenJobsMsg:
-		id := m.newReqID()
-		m.genJobs = id
-		m.loading = true
-		return m, jobsForPipelineCmd(m.ctx, m.client, msg.ProjectID, msg.PipelineID, id)
+		return m.openJobsForPipelines(msg.Pipelines)
 
 	case components.OpenLogsMsg:
 		return m.openLogs(msg)

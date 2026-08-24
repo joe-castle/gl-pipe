@@ -128,17 +128,17 @@ func jobsForPipelineCmd(ctx context.Context, client *api.Client, projectID, pipe
 	}
 }
 
-func retryJobCmd(ctx context.Context, client *api.Client, projectID, jobID int, id reqID) tea.Cmd {
+func retryJobCmd(ctx context.Context, client *api.Client, projectID, pipelineID, jobID int, id reqID) tea.Cmd {
 	return func() tea.Msg {
 		err := client.RetryJob(ctx, projectID, jobID)
-		return jobActionMsg{reqID: id, projectID: projectID, jobID: jobID, err: err}
+		return jobActionMsg{reqID: id, projectID: projectID, pipelineID: pipelineID, jobID: jobID, err: err}
 	}
 }
 
-func cancelJobCmd(ctx context.Context, client *api.Client, projectID, jobID int, id reqID) tea.Cmd {
+func cancelJobCmd(ctx context.Context, client *api.Client, projectID, pipelineID, jobID int, id reqID) tea.Cmd {
 	return func() tea.Msg {
 		err := client.CancelJob(ctx, projectID, jobID)
-		return jobActionMsg{reqID: id, projectID: projectID, jobID: jobID, err: err}
+		return jobActionMsg{reqID: id, projectID: projectID, pipelineID: pipelineID, jobID: jobID, err: err}
 	}
 }
 

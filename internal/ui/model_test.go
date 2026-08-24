@@ -170,6 +170,59 @@ func TestHandleKey_EnterOnStagedProjectsShowsAllTogether(t *testing.T) {
 	}
 }
 
+// TestHandleKey_EnterOnStagedPipelinesShowsJobsForAll mirrors the
+// multi-project pipeline view, one level down: staging pipelines (possibly
+// from different projects) and pressing Enter should show all their jobs
+// together in one matrix.
+func TestHandleKey_EnterOnStagedPipelinesShowsJobsForAll(t *testing.T) {
+	m := newTestModel(t)
+	m.pane = panePipelines
+	m.pipelineList.SetPipelines([]api.Pipeline{
+		{ID: 1, ProjectID: 10},
+		{ID: 2, ProjectID: 11},
+	})
+	m.pipelineList.Selected[1] = true
+	m.pipelineList.Selected[2] = true
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a Cmd batch loading jobs for the staged pipelines")
+	}
+
+	updated, _ = mm.Update(jobsLoadedMsg{
+		reqID: mm.genJobs, pipelineID: 1,
+		jobs: []api.Job{{ID: 100, ProjectID: 10, PipelineID: 1}},
+	})
+	mm = updated.(Model)
+	updated, _ = mm.Update(jobsLoadedMsg{
+		reqID: mm.genJobs, pipelineID: 2,
+		jobs: []api.Job{{ID: 200, ProjectID: 11, PipelineID: 2}},
+	})
+	mm = updated.(Model)
+
+	if !mm.pipelineList.InJobs() {
+		t.Fatal("expected job matrix mode after both responses")
+	}
+	if len(mm.pipelineList.Pipelines) != 2 {
+		t.Fatalf("expected jobs merged from both staged pipelines, got %d pipelines recorded", len(mm.pipelineList.Pipelines))
+	}
+}
+
+// TestUpdate_JobActionMsgReturnsRefreshCmd is a light regression check that
+// pipelineID now threads through job retry/cancel responses (needed so the
+// post-action refresh targets the right pipeline in a multi-pipeline view).
+func TestUpdate_JobActionMsgReturnsRefreshCmd(t *testing.T) {
+	m := newTestModel(t)
+	m.genJobs = 5
+
+	updated, cmd := m.Update(jobActionMsg{reqID: 5, projectID: 10, pipelineID: 1, jobID: 100})
+	if cmd == nil {
+		t.Fatal("expected a Cmd to refresh that pipeline's jobs")
+	}
+	_ = updated
+}
+
 // TestUpdate_PipelinesLoadedClearsOnANewBatchButAccumulatesWithinOne
 // guards the two halves of the fix together: a fresh Enter must not show
 // leftovers from an earlier, unrelated view, but responses belonging to

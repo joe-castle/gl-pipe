@@ -102,10 +102,11 @@ type jobsLoadedMsg struct {
 
 // jobActionMsg reports the outcome of a retry/cancel on a single job.
 type jobActionMsg struct {
-	reqID     reqID
-	projectID int
-	jobID     int
-	err       error
+	reqID      reqID
+	projectID  int
+	pipelineID int
+	jobID      int
+	err        error
 }
 
 // logStreamReadyMsg carries the channel a freshly-started log-streaming
