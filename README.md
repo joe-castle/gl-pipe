@@ -129,6 +129,10 @@ The project explorer only syncs projects from an instance's `default_groups` —
 | `Enter` | View the job matrix for the highlighted pipeline |
 | `R` | Bulk retry the staged (or highlighted) pipeline(s) |
 | `K` | Bulk cancel the staged (or highlighted) pipeline(s) |
+| `s` | Cycle the sort column (Date → Project → Status → Ref → SHA → Author → Duration) |
+| `S` | Reverse sort direction without changing column |
+
+Sorted by Date, newest first, by default.
 
 ### Job matrix
 

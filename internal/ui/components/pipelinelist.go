@@ -2,6 +2,8 @@ package components
 
 import (
 	"fmt"
+	"sort"
+	"time"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
@@ -42,6 +44,42 @@ const (
 	modeJobs
 )
 
+// pipelineSortField is one column the pipeline matrix can be sorted by,
+// cycled with 's'.
+type pipelineSortField int
+
+const (
+	sortByDate pipelineSortField = iota
+	sortByProject
+	sortByStatus
+	sortByRef
+	sortBySHA
+	sortByAuthor
+	sortByDuration
+	sortFieldCount
+)
+
+func (f pipelineSortField) String() string {
+	switch f {
+	case sortByDate:
+		return "Date"
+	case sortByProject:
+		return "Project"
+	case sortByStatus:
+		return "Status"
+	case sortByRef:
+		return "Ref"
+	case sortBySHA:
+		return "SHA"
+	case sortByAuthor:
+		return "Author"
+	case sortByDuration:
+		return "Duration"
+	default:
+		return ""
+	}
+}
+
 // PipelineList renders the multi-project pipeline matrix and, drilled into
 // one pipeline, its job matrix.
 type PipelineList struct {
@@ -51,6 +89,8 @@ type PipelineList struct {
 	projectNames map[int]string
 	pipeTable    table.Model
 	Selected     map[int]bool // pipeline ID -> staged for bulk action
+	sortField    pipelineSortField
+	sortDesc     bool
 
 	jobs      []api.Job
 	jobTable  table.Model
@@ -69,6 +109,7 @@ func NewPipelineList() PipelineList {
 		{Title: "SHA", Width: 10},
 		{Title: "Author", Width: 12},
 		{Title: "Duration", Width: 10},
+		{Title: "Date", Width: 12},
 	}
 	pipeTable := table.New(table.WithColumns(pipeCols), table.WithFocused(true), table.WithHeight(15))
 
@@ -89,6 +130,8 @@ func NewPipelineList() PipelineList {
 		projectNames: map[int]string{},
 		Selected:     map[int]bool{},
 		SelectedJ:    map[int]bool{},
+		sortField:    sortByDate,
+		sortDesc:     true,
 	}
 }
 
@@ -138,7 +181,57 @@ func (p *PipelineList) AddOrUpdate(pl api.Pipeline) {
 	p.syncPipeRows()
 }
 
+// SortBy sets the sort field, always resetting to descending order (the
+// default for a freshly-chosen column — most relevant first).
+func (p *PipelineList) SortBy(field pipelineSortField) {
+	p.sortField = field
+	p.sortDesc = true
+	p.syncPipeRows()
+}
+
+// CycleSort advances to the next sort field, per 's'.
+func (p *PipelineList) CycleSort() {
+	p.SortBy((p.sortField + 1) % sortFieldCount)
+}
+
+// ToggleSortDirection flips ascending/descending on the current sort
+// field, per 'S', without changing which field is sorted.
+func (p *PipelineList) ToggleSortDirection() {
+	p.sortDesc = !p.sortDesc
+	p.syncPipeRows()
+}
+
+func (p *PipelineList) sortPipelines() {
+	less := func(i, j int) bool {
+		a, b := p.pipelines[i], p.pipelines[j]
+		switch p.sortField {
+		case sortByDate:
+			return a.CreatedAt.Before(b.CreatedAt)
+		case sortByProject:
+			return p.projectNames[a.ProjectID] < p.projectNames[b.ProjectID]
+		case sortByStatus:
+			return a.Status < b.Status
+		case sortByRef:
+			return a.Ref < b.Ref
+		case sortBySHA:
+			return a.SHA < b.SHA
+		case sortByAuthor:
+			return a.User < b.User
+		case sortByDuration:
+			return a.Duration < b.Duration
+		default:
+			return false
+		}
+	}
+	if p.sortDesc {
+		sort.SliceStable(p.pipelines, func(i, j int) bool { return less(j, i) })
+	} else {
+		sort.SliceStable(p.pipelines, less)
+	}
+}
+
 func (p *PipelineList) syncPipeRows() {
+	p.sortPipelines()
 	rows := make([]table.Row, len(p.pipelines))
 	for i, pl := range p.pipelines {
 		check := " "
@@ -157,6 +250,7 @@ func (p *PipelineList) syncPipeRows() {
 			sha,
 			pl.User,
 			formatDuration(pl.Duration),
+			formatAge(pl.CreatedAt),
 		}
 	}
 	setRows(&p.pipeTable, rows)
@@ -171,6 +265,26 @@ func formatDuration(d interface{ Seconds() float64 }) string {
 		return fmt.Sprintf("%ds", secs)
 	}
 	return fmt.Sprintf("%dm%ds", secs/60, secs%60)
+}
+
+// formatAge renders a compact "time since" label (pipeline matrix Date
+// column), since absolute timestamps don't fit the column width and
+// relative age is what you actually want at a glance.
+func formatAge(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
 }
 
 // HighlightedPipeline returns the pipeline under the cursor, if any.
@@ -281,6 +395,12 @@ func (p PipelineList) Update(msg tea.Msg) (PipelineList, tea.Cmd) {
 				targets := p.SelectedPipelines()
 				retry := km.String() == "R"
 				return p, func() tea.Msg { return BulkPipelineActionMsg{Targets: targets, Retry: retry} }
+			case "s":
+				p.CycleSort()
+				return p, nil
+			case "S":
+				p.ToggleSortDirection()
+				return p, nil
 			}
 		case modeJobs:
 			switch km.String() {
@@ -320,6 +440,11 @@ func (p PipelineList) View() string {
 		header := fmt.Sprintf("Jobs for pipeline #%d (%s) — %d staged\n", p.Pipeline.IID, p.Pipeline.Ref, len(p.SelectedJ))
 		return lipgloss.NewStyle().Render(header + p.jobTable.View())
 	}
-	header := fmt.Sprintf("%d pipelines (%d staged)\n", len(p.pipelines), len(p.Selected))
+	dir := "↓"
+	if !p.sortDesc {
+		dir = "↑"
+	}
+	header := fmt.Sprintf("%d pipelines (%d staged) — sorted by %s %s (s: cycle, S: reverse)\n",
+		len(p.pipelines), len(p.Selected), p.sortField, dir)
 	return lipgloss.NewStyle().Render(header + p.pipeTable.View())
 }
