@@ -92,6 +92,10 @@ func (s Settings) View() string {
 	if len(s.Presets) > 0 {
 		b.WriteString("\nPresets: " + strings.Join(s.Presets, ", ") + "\n")
 	}
-	b.WriteString("\nj/k: move · enter: switch instance · esc: close")
+	b.WriteString("\n" + RenderHelp(
+		[2]string{"j/k", "move"},
+		[2]string{"enter", "switch instance"},
+		[2]string{"esc", "close"},
+	))
 	return b.String()
 }

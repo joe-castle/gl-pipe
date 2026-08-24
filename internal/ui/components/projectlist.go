@@ -55,13 +55,14 @@ type ProjectList struct {
 func NewProjectList() ProjectList {
 	cols := []table.Column{
 		{Title: "", Width: 3},
-		{Title: "Project", Width: 40},
-		{Title: "Ref", Width: 20},
+		{Title: "PROJECT", Width: 40},
+		{Title: "REF", Width: 20},
 	}
 	t := table.New(
 		table.WithColumns(cols),
 		table.WithFocused(true),
 		table.WithHeight(15),
+		table.WithStyles(TableStyles()),
 	)
 
 	filter := textinput.New()
@@ -144,8 +145,8 @@ func (p *ProjectList) SetSize(w, h int) {
 	const checkW, refW = 3, 20
 	p.table.SetColumns([]table.Column{
 		{Title: "", Width: checkW},
-		{Title: "Project", Width: flexColumnWidth(w, []int{checkW, refW}, 20)},
-		{Title: "Ref", Width: refW},
+		{Title: "PROJECT", Width: flexColumnWidth(w, []int{checkW, refW}, 20)},
+		{Title: "REF", Width: refW},
 	})
 	p.table.SetWidth(w)
 	p.table.SetHeight(h - 4)
@@ -262,6 +263,14 @@ func (p ProjectList) View() string {
 				b.WriteString(fmt.Sprintf("  %s:%d %s\n", h.Path, h.StartLine, h.ProjectPath))
 			}
 		}
+	} else {
+		b.WriteString("\n" + RenderHelp(
+			[2]string{"/", "filter"},
+			[2]string{"x", "stage"},
+			[2]string{"T", "lock latest tag"},
+			[2]string{"enter", "view pipelines"},
+			[2]string{"M", "view MRs"},
+		))
 	}
 	return lipgloss.NewStyle().Render(b.String())
 }

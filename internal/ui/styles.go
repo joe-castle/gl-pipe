@@ -1,33 +1,35 @@
 package ui
 
-import (
-	"github.com/charmbracelet/lipgloss"
+import "github.com/charmbracelet/lipgloss"
 
-	"github.com/joeca/gl-pipe/internal/api"
-)
-
-// Palette. Kept to a small, deliberately reused set of colors so the whole
-// app reads as one system rather than a pile of ad hoc hex codes.
+// Palette. k9s-inspired: cyan accent, dark chrome, strong status colors.
+// Kept to a small, deliberately reused set so the whole app reads as one
+// system rather than a pile of ad hoc hex codes. Mirrored (not shared, to
+// avoid an import cycle: components can't import ui) in
+// internal/ui/components/style.go for the tables and their own help lines.
 var (
-	colorBg       = lipgloss.Color("235")
-	colorFg       = lipgloss.Color("252")
-	colorMuted    = lipgloss.Color("243")
-	colorAccent   = lipgloss.Color("212")
-	colorBorder   = lipgloss.Color("240")
-	colorSuccess  = lipgloss.Color("42")
-	colorFailed   = lipgloss.Color("203")
-	colorRunning  = lipgloss.Color("39")
-	colorPending  = lipgloss.Color("221")
-	colorCanceled = lipgloss.Color("245")
-	colorManual   = lipgloss.Color("135")
+	colorMuted  = lipgloss.Color("244")
+	colorAccent = lipgloss.Color("51") // cyan — k9s' signature accent
+	colorBorder = lipgloss.Color("238")
+	colorFailed = lipgloss.Color("203")
 )
 
 var (
+	// titleStyle is the " gl-pipe " badge in the header bar.
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("230")).
+			Foreground(lipgloss.Color("16")).
 			Background(colorAccent).
 			Padding(0, 1)
+
+	// breadcrumbStyle names the current view (EXPLORER / PIPELINES / ...).
+	breadcrumbStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorAccent)
+
+	// contextStyle renders secondary header info (instance name, counts).
+	contextStyle = lipgloss.NewStyle().
+			Foreground(colorMuted)
 
 	statusBarStyle = lipgloss.NewStyle().
 			Foreground(colorMuted).
@@ -37,14 +39,11 @@ var (
 			Foreground(colorFailed).
 			Bold(true)
 
-	helpStyle = lipgloss.NewStyle().
-			Foreground(colorMuted)
-
-	focusedBorderStyle = lipgloss.NewStyle().
-				BorderStyle(lipgloss.RoundedBorder()).
-				BorderForeground(colorAccent)
-
-	blurredBorderStyle = lipgloss.NewStyle().
+	// contentBorderStyle frames the main pane (explorer/pipelines). No
+	// padding — it wraps an already-rendered body, so the extra 2 cols/2
+	// rows it adds are exactly the border itself, keeping the width/height
+	// math WindowSizeMsg does for the components inside it simple.
+	contentBorderStyle = lipgloss.NewStyle().
 				BorderStyle(lipgloss.RoundedBorder()).
 				BorderForeground(colorBorder)
 
@@ -52,43 +51,4 @@ var (
 			BorderStyle(lipgloss.RoundedBorder()).
 			BorderForeground(colorAccent).
 			Padding(1, 2)
-
-	leaderMenuStyle = lipgloss.NewStyle().
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(colorAccent).
-			Padding(0, 1)
-
-	leaderKeyStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(colorAccent)
-
-	selectedRowStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("230")).
-				Background(lipgloss.Color("237")).
-				Bold(true)
-
-	checkedStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 )
-
-// StatusBadge renders a short colored label for a pipeline/job status.
-func StatusBadge(s api.PipelineStatus) string {
-	style := lipgloss.NewStyle().Bold(true).Padding(0, 1)
-	switch s {
-	case api.StatusSuccess:
-		return style.Foreground(colorSuccess).Render("✓ success")
-	case api.StatusFailed:
-		return style.Foreground(colorFailed).Render("✗ failed")
-	case api.StatusRunning:
-		return style.Foreground(colorRunning).Render("● running")
-	case api.StatusPending, api.StatusWaiting, api.StatusCreated:
-		return style.Foreground(colorPending).Render("… pending")
-	case api.StatusCanceled:
-		return style.Foreground(colorCanceled).Render("⊘ canceled")
-	case api.StatusSkipped:
-		return style.Foreground(colorCanceled).Render("⊙ skipped")
-	case api.StatusManual:
-		return style.Foreground(colorManual).Render("▶ manual")
-	default:
-		return style.Foreground(colorMuted).Render(string(s))
-	}
-}

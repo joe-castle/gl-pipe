@@ -530,6 +530,29 @@ func TestHandleKey_ModalTakesPrecedenceOverLeaderMenu(t *testing.T) {
 	}
 }
 
+func TestBreadcrumb_ReflectsCurrentView(t *testing.T) {
+	m := newTestModel(t)
+	if got := m.breadcrumb(); got != "EXPLORER" {
+		t.Errorf("breadcrumb() = %q, want EXPLORER", got)
+	}
+
+	m.pane = panePipelines
+	if got := m.breadcrumb(); got != "PIPELINES" {
+		t.Errorf("breadcrumb() = %q, want PIPELINES", got)
+	}
+
+	m.pipelineList.AddJobs(api.Pipeline{ID: 1}, nil)
+	if got := m.breadcrumb(); got != "JOBS" {
+		t.Errorf("breadcrumb() = %q, want JOBS", got)
+	}
+
+	m.pane = paneExplorer
+	m.mrList.Active = true
+	if got := m.breadcrumb(); got != "MERGE REQUESTS" {
+		t.Errorf("breadcrumb() = %q, want MERGE REQUESTS", got)
+	}
+}
+
 func TestHandleKey_TabSwitchesPane(t *testing.T) {
 	m := newTestModel(t)
 	if m.pane != paneExplorer {

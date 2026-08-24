@@ -219,9 +219,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.projectList.SetSize(msg.Width, msg.Height-4)
-		m.pipelineList.SetSize(msg.Width, msg.Height-4)
-		m.logViewer.SetSize(msg.Width, msg.Height-4)
+		// header(1) + breadcrumb(1) + status(1) = 3 lines outside the body
+		// always; the explorer/pipeline panes additionally sit inside
+		// contentBorderStyle's frame (2 rows, 2 cols) — see View().
+		m.projectList.SetSize(msg.Width-2, msg.Height-5)
+		m.pipelineList.SetSize(msg.Width-2, msg.Height-5)
+		m.logViewer.SetSize(msg.Width, msg.Height-3)
 		m.mrList.SetSize(msg.Width, msg.Height-4)
 		m.leaderMenu.Width = msg.Width
 		return m, nil
@@ -539,28 +542,41 @@ func (m Model) View() string {
 	}
 
 	var body string
+	framed := true
 	switch {
 	case m.logViewer.Active:
 		body = m.logViewer.View()
+		framed = false
 	case m.variables.Active:
 		body = modalStyle.Render(m.variables.View())
+		framed = false
 	case m.settings.Active:
 		body = modalStyle.Render(m.settings.View())
+		framed = false
 	case m.presets.Active:
 		body = modalStyle.Render(m.presets.View())
+		framed = false
 	case m.groupPicker.Active:
 		body = modalStyle.Render(m.groupPicker.View())
+		framed = false
 	case m.refSearch.Active:
 		body = modalStyle.Render(m.refSearch.View())
+		framed = false
 	case m.mrList.Active:
 		body = modalStyle.Render(m.mrList.View())
+		framed = false
 	case m.pane == panePipelines:
 		body = m.pipelineList.View()
 	default:
 		body = m.projectList.View()
 	}
+	if framed {
+		body = contentBorderStyle.Render(body)
+	}
 
-	title := titleStyle.Render(" gl-pipe ") + "  " + m.cfg.CurrentInstance
+	header := titleStyle.Render(" gl-pipe ") + "  " + contextStyle.Render(m.cfg.CurrentInstance)
+	crumb := breadcrumbStyle.Render(m.breadcrumb())
+
 	status := statusBarStyle.Render(m.statusMsg)
 	if m.statusErr {
 		status = statusBarStyle.Render(errorStyle.Render(m.statusMsg))
@@ -569,11 +585,38 @@ func (m Model) View() string {
 		status = statusBarStyle.Render("loading...")
 	}
 
-	out := lipgloss.JoinVertical(lipgloss.Left, title, body, status)
+	out := lipgloss.JoinVertical(lipgloss.Left, header, crumb, body, status)
 	if m.leaderMenu.Active {
 		out = lipgloss.JoinVertical(lipgloss.Left, out, m.leaderMenu.View())
 	}
 	return out
+}
+
+// breadcrumb names the current view for the header's second line, k9s-style.
+func (m Model) breadcrumb() string {
+	switch {
+	case m.logViewer.Active:
+		return "LOGS"
+	case m.variables.Active:
+		return "TRIGGER PIPELINE"
+	case m.settings.Active:
+		return "SETTINGS"
+	case m.presets.Active:
+		return "PRESETS"
+	case m.groupPicker.Active:
+		return "DISCOVER GROUPS"
+	case m.refSearch.Active:
+		return "SEARCH BY REF"
+	case m.mrList.Active:
+		return "MERGE REQUESTS"
+	case m.pane == panePipelines:
+		if m.pipelineList.InJobs() {
+			return "JOBS"
+		}
+		return "PIPELINES"
+	default:
+		return "EXPLORER"
+	}
 }
 
 func sortedKeys(m map[string]config.Instance) []string {

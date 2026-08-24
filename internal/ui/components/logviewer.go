@@ -178,6 +178,11 @@ func (l LogViewer) View() string {
 		body += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Render(
 			"match "+strconv.Itoa(l.matchIdx+1)+"/"+strconv.Itoa(len(l.matches))+" (n/N to cycle)")
 	}
-	body += "\n/ : search · E: jump to error · G: bottom · esc: back"
+	body += "\n" + RenderHelp(
+		[2]string{"/", "search"},
+		[2]string{"E", "jump to error"},
+		[2]string{"G", "bottom"},
+		[2]string{"esc", "back"},
+	)
 	return body
 }

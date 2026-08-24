@@ -59,13 +59,13 @@ func NewVariables() Variables {
 	val.Width = 40
 
 	cols := []table.Column{
-		{Title: "Key", Width: 24},
-		{Title: "Value", Width: 24},
-		{Title: "Type", Width: 8},
-		{Title: "Masked", Width: 7},
-		{Title: "Protected", Width: 9},
+		{Title: "KEY", Width: 24},
+		{Title: "VALUE", Width: 24},
+		{Title: "TYPE", Width: 8},
+		{Title: "MASKED", Width: 7},
+		{Title: "PROTECTED", Width: 9},
 	}
-	tbl := table.New(table.WithColumns(cols), table.WithFocused(true), table.WithHeight(10))
+	tbl := table.New(table.WithColumns(cols), table.WithFocused(true), table.WithHeight(10), table.WithStyles(TableStyles()))
 
 	return Variables{RefInput: ref, keyInput: key, valueInput: val, table: tbl}
 }
@@ -248,6 +248,15 @@ func (v Variables) View() string {
 	} else if v.editing == varEditValue {
 		b += "\n" + v.valueInput.View()
 	}
-	b += "\n\na: add · d: delete · t: type · m: masked · p: protected · tab: ref/rows · enter: edit/dispatch · esc: cancel"
+	b += "\n\n" + RenderHelp(
+		[2]string{"a", "add"},
+		[2]string{"d", "delete"},
+		[2]string{"t", "type"},
+		[2]string{"m", "masked"},
+		[2]string{"p", "protected"},
+		[2]string{"tab", "ref/rows"},
+		[2]string{"enter", "edit/dispatch"},
+		[2]string{"esc", "cancel"},
+	)
 	return lipgloss.NewStyle().Render(b)
 }

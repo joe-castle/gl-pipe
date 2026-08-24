@@ -55,18 +55,15 @@ func (l LeaderMenu) Update(msg tea.Msg) (LeaderMenu, tea.Cmd) {
 }
 
 func (l LeaderMenu) View() string {
-	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
-	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-
 	parts := make([]string, 0, len(l.Actions))
 	for _, a := range l.Actions {
-		parts = append(parts, keyStyle.Render(a.Key)+" "+labelStyle.Render(a.Label))
+		parts = append(parts, helpKeyStyle.Render(a.Key)+" "+helpDescStyle.Render(a.Label))
 	}
 	content := strings.Join(parts, "   ")
 
 	style := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("212")).
+		BorderForeground(colorAccent).
 		Padding(0, 1)
 	if l.Width > 0 {
 		style = style.Width(l.Width - 4)

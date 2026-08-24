@@ -43,10 +43,10 @@ func NewGroupPicker() GroupPicker {
 
 	cols := []table.Column{
 		{Title: "", Width: 3},
-		{Title: "Group", Width: 30},
-		{Title: "Path", Width: 40},
+		{Title: "GROUP", Width: 30},
+		{Title: "PATH", Width: 40},
 	}
-	tbl := table.New(table.WithColumns(cols), table.WithFocused(true), table.WithHeight(15))
+	tbl := table.New(table.WithColumns(cols), table.WithFocused(true), table.WithHeight(15), table.WithStyles(TableStyles()))
 
 	return GroupPicker{filterInput: filter, table: tbl, Selected: map[string]bool{}}
 }
@@ -181,6 +181,11 @@ func (g GroupPicker) View() string {
 	if len(g.all) == 0 {
 		b.WriteString("\n(no groups found — you may not be a member of any)")
 	}
-	b.WriteString("\n\n/: filter · x/enter: toggle · enter on last row: save · esc: cancel")
+	b.WriteString("\n\n" + RenderHelp(
+		[2]string{"/", "filter"},
+		[2]string{"x/enter", "toggle"},
+		[2]string{"enter on last row", "save"},
+		[2]string{"esc", "cancel"},
+	))
 	return lipgloss.NewStyle().Render(b.String())
 }

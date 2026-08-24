@@ -109,28 +109,28 @@ type PipelineList struct {
 func NewPipelineList() PipelineList {
 	pipeCols := []table.Column{
 		{Title: "", Width: 3},
-		{Title: "Project", Width: 24},
-		{Title: "Status", Width: 12},
-		{Title: "Ref", Width: 16},
+		{Title: "PROJECT", Width: 24},
+		{Title: "STATUS", Width: 12},
+		{Title: "REF", Width: 16},
 		{Title: "SHA", Width: 10},
-		{Title: "Author", Width: 12},
-		{Title: "Duration", Width: 10},
-		{Title: "Date", Width: 12},
+		{Title: "AUTHOR", Width: 12},
+		{Title: "DURATION", Width: 10},
+		{Title: "DATE", Width: 12},
 	}
-	pipeTable := table.New(table.WithColumns(pipeCols), table.WithFocused(true), table.WithHeight(15))
+	pipeTable := table.New(table.WithColumns(pipeCols), table.WithFocused(true), table.WithHeight(15), table.WithStyles(TableStyles()))
 
 	jobCols := []table.Column{
 		{Title: "", Width: 3},
-		{Title: "Project", Width: 18},
-		{Title: "Pipeline", Width: 9},
-		{Title: "Stage", Width: 12},
-		{Title: "Job", Width: 20},
-		{Title: "Status", Width: 12},
-		{Title: "Runner", Width: 12},
-		{Title: "Retries", Width: 7},
-		{Title: "Duration", Width: 9},
+		{Title: "PROJECT", Width: 18},
+		{Title: "PIPELINE", Width: 9},
+		{Title: "STAGE", Width: 12},
+		{Title: "JOB", Width: 20},
+		{Title: "STATUS", Width: 12},
+		{Title: "RUNNER", Width: 12},
+		{Title: "RETRIES", Width: 7},
+		{Title: "DURATION", Width: 9},
 	}
-	jobTable := table.New(table.WithColumns(jobCols), table.WithFocused(true), table.WithHeight(15))
+	jobTable := table.New(table.WithColumns(jobCols), table.WithFocused(true), table.WithHeight(15), table.WithStyles(TableStyles()))
 
 	filter := textinput.New()
 	filter.Placeholder = "filter by ref, status, project, author, or SHA..."
@@ -154,13 +154,13 @@ func (p *PipelineList) SetSize(w, h int) {
 	const checkW, statusW, refW, shaW, authorW, durationW, dateW = 3, 12, 16, 10, 12, 10, 12
 	p.pipeTable.SetColumns([]table.Column{
 		{Title: "", Width: checkW},
-		{Title: "Project", Width: flexColumnWidth(w, []int{checkW, statusW, refW, shaW, authorW, durationW, dateW}, 18)},
-		{Title: "Status", Width: statusW},
-		{Title: "Ref", Width: refW},
+		{Title: "PROJECT", Width: flexColumnWidth(w, []int{checkW, statusW, refW, shaW, authorW, durationW, dateW}, 18)},
+		{Title: "STATUS", Width: statusW},
+		{Title: "REF", Width: refW},
 		{Title: "SHA", Width: shaW},
-		{Title: "Author", Width: authorW},
-		{Title: "Duration", Width: durationW},
-		{Title: "Date", Width: dateW},
+		{Title: "AUTHOR", Width: authorW},
+		{Title: "DURATION", Width: durationW},
+		{Title: "DATE", Width: dateW},
 	})
 	p.pipeTable.SetWidth(w)
 	p.pipeTable.SetHeight(h - 3)
@@ -169,14 +169,14 @@ func (p *PipelineList) SetSize(w, h int) {
 	projectW, jobW := splitFlexWidth(w, []int{checkW, pipelineW, stageW, jobStatusW, runnerW, retriesW, jobDurationW}, 0.4, 14, 16)
 	p.jobTable.SetColumns([]table.Column{
 		{Title: "", Width: checkW},
-		{Title: "Project", Width: projectW},
-		{Title: "Pipeline", Width: pipelineW},
-		{Title: "Stage", Width: stageW},
-		{Title: "Job", Width: jobW},
-		{Title: "Status", Width: jobStatusW},
-		{Title: "Runner", Width: runnerW},
-		{Title: "Retries", Width: retriesW},
-		{Title: "Duration", Width: jobDurationW},
+		{Title: "PROJECT", Width: projectW},
+		{Title: "PIPELINE", Width: pipelineW},
+		{Title: "STAGE", Width: stageW},
+		{Title: "JOB", Width: jobW},
+		{Title: "STATUS", Width: jobStatusW},
+		{Title: "RUNNER", Width: runnerW},
+		{Title: "RETRIES", Width: retriesW},
+		{Title: "DURATION", Width: jobDurationW},
 	})
 	p.jobTable.SetWidth(w)
 	p.jobTable.SetHeight(h - 3)
@@ -318,7 +318,7 @@ func (p *PipelineList) syncPipeRows() {
 		rows[i] = table.Row{
 			check,
 			p.projectNames[pl.ProjectID],
-			string(pl.Status),
+			StatusIcon(pl.Status),
 			pl.Ref,
 			sha,
 			pl.User,
@@ -466,7 +466,7 @@ func (p *PipelineList) syncJobRows() {
 			pipelineLabel,
 			j.Stage,
 			j.Name,
-			string(j.Status),
+			StatusIcon(j.Status),
 			j.RunnerTag,
 			retries,
 			formatDuration(j.Duration),
@@ -614,21 +614,35 @@ func (p PipelineList) View() string {
 		default:
 			header = fmt.Sprintf("Jobs for %d pipelines — %d staged\n", len(p.Pipelines), len(p.SelectedJ))
 		}
-		return lipgloss.NewStyle().Render(header + p.jobTable.View())
+		help := "\n" + RenderHelp(
+			[2]string{"x", "stage"},
+			[2]string{"enter", "view logs"},
+			[2]string{"R", "bulk retry"},
+			[2]string{"K", "bulk cancel"},
+			[2]string{"esc", "back"},
+		)
+		return lipgloss.NewStyle().Render(header + p.jobTable.View() + help)
 	}
+
 	dir := "↓"
 	if !p.sortDesc {
 		dir = "↑"
 	}
-
 	count := fmt.Sprintf("%d pipelines", len(p.filtered))
 	if p.filterInput.Value() != "" {
 		count = fmt.Sprintf("%d/%d pipelines", len(p.filtered), len(p.pipelines))
 	}
-	header := fmt.Sprintf("%s (%d staged) — sorted by %s %s (s: cycle, S: reverse, /: filter)\n",
-		count, len(p.Selected), p.sortField, dir)
+	header := fmt.Sprintf("%s (%d staged) — sorted by %s %s\n", count, len(p.Selected), p.sortField, dir)
 	if p.filtering {
 		header = p.filterInput.View() + "\n" + header
 	}
-	return lipgloss.NewStyle().Render(header + p.pipeTable.View())
+	help := "\n" + RenderHelp(
+		[2]string{"x", "stage"},
+		[2]string{"enter", "view jobs"},
+		[2]string{"R", "bulk retry"},
+		[2]string{"K", "bulk cancel"},
+		[2]string{"s/S", "sort/reverse"},
+		[2]string{"/", "filter"},
+	)
+	return lipgloss.NewStyle().Render(header + p.pipeTable.View() + help)
 }

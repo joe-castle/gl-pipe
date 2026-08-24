@@ -48,13 +48,13 @@ func NewMRList() MRList {
 	cols := []table.Column{
 		{Title: "", Width: 3},
 		{Title: "", Width: 5},
-		{Title: "Project", Width: 20},
-		{Title: "Title", Width: 40},
-		{Title: "Branch", Width: 24},
-		{Title: "Author", Width: 12},
-		{Title: "Updated", Width: 10},
+		{Title: "PROJECT", Width: 20},
+		{Title: "TITLE", Width: 40},
+		{Title: "BRANCH", Width: 24},
+		{Title: "AUTHOR", Width: 12},
+		{Title: "UPDATED", Width: 10},
 	}
-	tbl := table.New(table.WithColumns(cols), table.WithFocused(true), table.WithHeight(15))
+	tbl := table.New(table.WithColumns(cols), table.WithFocused(true), table.WithHeight(15), table.WithStyles(TableStyles()))
 
 	return MRList{table: tbl, filterInput: filter, Selected: map[int]bool{}, projectNames: map[int]string{}}
 }
@@ -68,11 +68,11 @@ func (l *MRList) SetSize(w, h int) {
 	l.table.SetColumns([]table.Column{
 		{Title: "", Width: checkW},
 		{Title: "", Width: draftW},
-		{Title: "Project", Width: projectW},
-		{Title: "Title", Width: titleW},
-		{Title: "Branch", Width: branchW},
-		{Title: "Author", Width: authorW},
-		{Title: "Updated", Width: updatedW},
+		{Title: "PROJECT", Width: projectW},
+		{Title: "TITLE", Width: titleW},
+		{Title: "BRANCH", Width: branchW},
+		{Title: "AUTHOR", Width: authorW},
+		{Title: "UPDATED", Width: updatedW},
 	})
 	l.table.SetWidth(w)
 	l.table.SetHeight(h - 4)
@@ -250,6 +250,11 @@ func (l MRList) View() string {
 		b.WriteString(fmt.Sprintf("%d merge request(s) (%d staged)\n", len(l.filtered), len(l.Selected)))
 	}
 	b.WriteString(l.table.View())
-	b.WriteString("\n\n/: filter · x: stage · enter: jump to pipelines (staged, or highlighted) · esc: cancel")
+	b.WriteString("\n\n" + RenderHelp(
+		[2]string{"/", "filter"},
+		[2]string{"x", "stage"},
+		[2]string{"enter", "jump to pipelines (staged, or highlighted)"},
+		[2]string{"esc", "cancel"},
+	))
 	return lipgloss.NewStyle().Render(b.String())
 }
