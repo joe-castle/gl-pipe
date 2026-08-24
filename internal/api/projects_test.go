@@ -7,6 +7,22 @@ import (
 	"testing"
 )
 
+func TestListGroups_ParsesFullPath(t *testing.T) {
+	mux, client := setup(t)
+	mux.HandleFunc("/api/v4/groups", func(w http.ResponseWriter, r *http.Request) {
+		testMethod(t, r, http.MethodGet)
+		fmt.Fprint(w, `[{"id": 1, "name": "Core Services", "full_path": "backend/core-services"}]`)
+	})
+
+	groups, err := client.ListGroups(context.Background())
+	if err != nil {
+		t.Fatalf("ListGroups returned error: %v", err)
+	}
+	if len(groups) != 1 || groups[0].FullPath != "backend/core-services" || groups[0].Name != "Core Services" {
+		t.Fatalf("unexpected groups: %+v", groups)
+	}
+}
+
 func TestListGroupProjects_ParsesAndPaginates(t *testing.T) {
 	mux, client := setup(t)
 	page := 0

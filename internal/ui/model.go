@@ -57,6 +57,7 @@ type Model struct {
 	settings     components.Settings
 	leaderMenu   components.LeaderMenu
 	presets      presetPicker
+	groupPicker  components.GroupPicker
 
 	statusMsg string
 	statusErr bool
@@ -69,6 +70,7 @@ type Model struct {
 	genPipelines reqID
 	genJobs      reqID
 	genLogs      reqID
+	genGroups    reqID
 
 	logCancel context.CancelFunc
 	logJobURL string
@@ -94,6 +96,7 @@ func New(ctx context.Context, cancel context.CancelFunc, cfg *config.Config, con
 		logViewer:    components.NewLogViewer(),
 		settings:     components.NewSettings(),
 		leaderMenu:   components.NewLeaderMenu(toComponentActions(LeaderActions)),
+		groupPicker:  components.NewGroupPicker(),
 		projectNames: map[int]string{},
 	}
 	if cfg == nil {
@@ -291,6 +294,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case groupsLoadedMsg:
+		if msg.reqID != m.genGroups {
+			return m, nil
+		}
+		m.loading = false
+		if msg.err != nil {
+			m.setErr(msg.err)
+			return m, nil
+		}
+		inst, _ := m.cfg.Active()
+		m.groupPicker.Open(msg.groups, inst.DefaultGroups)
+		return m, nil
+
+	case components.GroupsChosenMsg:
+		return m.saveChosenGroups(msg)
+
 	case components.DispatchMsg:
 		return m.dispatchBatch(msg)
 
@@ -451,6 +470,8 @@ func (m Model) View() string {
 		body = modalStyle.Render(m.settings.View())
 	case m.presets.Active:
 		body = modalStyle.Render(m.presets.View())
+	case m.groupPicker.Active:
+		body = modalStyle.Render(m.groupPicker.View())
 	case m.pane == panePipelines:
 		body = m.pipelineList.View()
 	default:

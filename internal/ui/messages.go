@@ -37,6 +37,14 @@ type projectsSyncedMsg struct {
 	err      error
 }
 
+// groupsLoadedMsg carries the accessible group list for the discovery
+// picker (<Space> g).
+type groupsLoadedMsg struct {
+	reqID  reqID
+	groups []api.Group
+	err    error
+}
+
 // refsLoadedMsg carries branches+tags for the ref picker.
 type refsLoadedMsg struct {
 	reqID     reqID

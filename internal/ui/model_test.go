@@ -10,6 +10,7 @@ import (
 
 	"github.com/joeca/gl-pipe/internal/api"
 	"github.com/joeca/gl-pipe/internal/config"
+	"github.com/joeca/gl-pipe/internal/ui/components"
 )
 
 func newTestModel(t *testing.T) Model {
@@ -59,6 +60,40 @@ func TestUpdate_DropsStaleProjectsSyncedMsg(t *testing.T) {
 	mm = updated.(Model)
 	if len(mm.cacheIdx.Projects) != 1 || mm.cacheIdx.Projects[0].Name != "fresh" {
 		t.Fatalf("matching-generation message should have updated cacheIdx, got %+v", mm.cacheIdx.Projects)
+	}
+}
+
+// TestSaveChosenGroups_MergesAdditivelyWithoutDuplicates exercises the
+// discovery picker's save path: newly-chosen groups are appended to
+// default_groups, existing ones are left alone and not duplicated.
+func TestSaveChosenGroups_MergesAdditivelyWithoutDuplicates(t *testing.T) {
+	m := newTestModelWithGroups(t, []string{"backend/core"})
+
+	updated, _ := m.Update(components.GroupsChosenMsg{FullPaths: []string{"backend/core", "infrastructure"}})
+	mm := updated.(Model)
+
+	inst := mm.cfg.Instances["test"]
+	if len(inst.DefaultGroups) != 2 {
+		t.Fatalf("expected 2 default_groups (no duplicate), got %+v", inst.DefaultGroups)
+	}
+	found := map[string]bool{}
+	for _, g := range inst.DefaultGroups {
+		found[g] = true
+	}
+	if !found["backend/core"] || !found["infrastructure"] {
+		t.Fatalf("expected both groups present, got %+v", inst.DefaultGroups)
+	}
+}
+
+func TestHandleLeaderAction_GTriggersGroupsLoad(t *testing.T) {
+	m := newTestModel(t)
+	updated, cmd := m.Update(components.LeaderActionMsg{Key: "g"})
+	mm := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a Cmd to load groups")
+	}
+	if mm.genGroups == 0 {
+		t.Fatal("expected genGroups to be set")
 	}
 }
 

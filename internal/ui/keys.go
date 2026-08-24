@@ -47,6 +47,7 @@ var LeaderActions = []LeaderAction{
 	{Key: "p", Label: "trigger pipeline"},
 	{Key: "f", Label: "blob search filter"},
 	{Key: "v", Label: "variable preset"},
+	{Key: "g", Label: "discover groups"},
 	{Key: "s", Label: "settings / instances"},
 	{Key: "o", Label: "open in browser"},
 	{Key: "r", Label: "force refresh"},

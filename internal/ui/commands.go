@@ -72,6 +72,13 @@ func blobSearchCmd(ctx context.Context, client *api.Client, group, query string,
 	}
 }
 
+func loadGroupsCmd(ctx context.Context, client *api.Client, id reqID) tea.Cmd {
+	return func() tea.Msg {
+		groups, err := client.ListGroups(ctx)
+		return groupsLoadedMsg{reqID: id, groups: groups, err: err}
+	}
+}
+
 func loadRefsCmd(ctx context.Context, client *api.Client, projectID int, id reqID) tea.Cmd {
 	return func() tea.Msg {
 		tags, err := client.ListTags(ctx, projectID)

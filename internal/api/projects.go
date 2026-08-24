@@ -9,6 +9,27 @@ import (
 	"golang.org/x/mod/semver"
 )
 
+// ListGroups returns every group/namespace the authenticated user is a
+// member of, for the group discovery picker (<Space> g).
+func (c *Client) ListGroups(ctx context.Context) ([]Group, error) {
+	var out []Group
+	opts := &gitlab.ListGroupsOptions{ListOptions: gitlab.ListOptions{PerPage: 100}}
+	for {
+		groups, resp, err := c.gl.Groups.ListGroups(opts, gitlab.WithContext(ctx))
+		if err != nil {
+			return nil, fmt.Errorf("listing groups: %w", err)
+		}
+		for _, g := range groups {
+			out = append(out, Group{ID: int(g.ID), Name: g.Name, FullPath: g.FullPath})
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = int64(resp.NextPage)
+	}
+	return out, nil
+}
+
 // ListGroupProjects returns every project under the given group/namespace path,
 // paging through the full result set.
 func (c *Client) ListGroupProjects(ctx context.Context, groupPath string) ([]Project, error) {

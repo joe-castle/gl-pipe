@@ -70,7 +70,7 @@ presets:
 
 A token can be a literal PAT, an `${ENV_VAR}` reference expanded at load time, or a `token_command: <shell command>` whose stdout is used as the token (e.g. to pull from a password manager). `token_command` takes precedence over `token` when both are set. The config file itself is written with owner-only (`0600`) permissions.
 
-The project explorer only syncs projects from an instance's `default_groups` — there's no unscoped "list every project on the instance" mode, to keep sync fast and predictable on large instances.
+The project explorer only syncs projects from an instance's `default_groups` — there's no unscoped "list every project on the instance" mode, to keep sync fast and predictable on large instances. You don't have to hand-type these: press `<Space> g` to fetch every group you're a member of and multi-select the ones you want (`x` to toggle, `Enter` on the `[ Save ]` row) — selections are merged into `default_groups` and gl-pipe resyncs immediately. If an instance has no `default_groups` configured yet, the status bar says so explicitly and points you at `<Space> g`.
 
 ## Keyboard shortcuts
 
@@ -97,6 +97,7 @@ The project explorer only syncs projects from an instance's `default_groups` —
 | `p` | Open the pipeline trigger modal for the staged (or highlighted) repo(s) |
 | `f` | Open the blob (code) search filter, scoped to a group |
 | `v` | Pick a variable preset to prefill the next trigger |
+| `g` | Discover groups you belong to and add some to `default_groups` |
 | `s` | Open settings — switch instance profile, view TTL/presets |
 | `o` | Open the focused project, pipeline, or job in your browser |
 | `r` | Force refresh — re-sync the project cache from GitLab |
@@ -110,6 +111,15 @@ The project explorer only syncs projects from an instance's `default_groups` —
 | `x` | Toggle multi-select on the highlighted project |
 | `T` | Lock the highlighted project's ref to its latest SemVer tag |
 | `Enter` | Drill into that project's pipelines |
+
+### Group discovery modal
+
+| Key | Action |
+|---|---|
+| `/` | Fuzzy-filter the group list |
+| `x` / `Enter` | Toggle the highlighted group |
+| `Enter` on `[ Save ]` | Merge selected groups into `default_groups` and resync |
+| `Esc` | Cancel without saving |
 
 ### Pipeline matrix
 

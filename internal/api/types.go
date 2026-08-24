@@ -13,6 +13,14 @@ type Project struct {
 	DefaultBranch     string
 }
 
+// Group is a GitLab group/namespace, used by the group discovery picker to
+// populate an instance's default_groups.
+type Group struct {
+	ID       int
+	Name     string
+	FullPath string
+}
+
 // Ref is a branch or tag.
 type Ref struct {
 	Name      string

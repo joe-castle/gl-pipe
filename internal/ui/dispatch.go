@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -33,6 +34,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case m.presets.Active:
 		var cmd tea.Cmd
 		m.presets, cmd = m.presets.Update(msg)
+		return m, cmd
+	case m.groupPicker.Active:
+		var cmd tea.Cmd
+		m.groupPicker, cmd = m.groupPicker.Update(msg)
 		return m, cmd
 	case m.logViewer.Active:
 		var cmd tea.Cmd
@@ -122,6 +127,12 @@ func (m Model) handleLeaderAction(key string) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case "g":
+		id := m.newReqID()
+		m.genGroups = id
+		m.loading = true
+		return m, loadGroupsCmd(m.ctx, m.client, id)
+
 	case "v":
 		names := make([]string, 0, len(m.cfg.Presets))
 		for name := range m.cfg.Presets {
@@ -181,6 +192,36 @@ func (m *Model) focusedWebURL() string {
 		return proj.WebURL
 	}
 	return ""
+}
+
+// saveChosenGroups merges the discovery picker's selection into the active
+// instance's default_groups (additive: existing groups are kept even if
+// not re-selected this time), persists config, and triggers a resync.
+func (m Model) saveChosenGroups(msg components.GroupsChosenMsg) (tea.Model, tea.Cmd) {
+	if len(msg.FullPaths) == 0 {
+		m.setStatus("no groups selected")
+		return m, nil
+	}
+	inst, err := m.cfg.Active()
+	if err != nil {
+		m.setErr(err)
+		return m, nil
+	}
+	existing := map[string]bool{}
+	for _, p := range inst.DefaultGroups {
+		existing[p] = true
+	}
+	added := 0
+	for _, p := range msg.FullPaths {
+		if !existing[p] {
+			inst.DefaultGroups = append(inst.DefaultGroups, p)
+			existing[p] = true
+			added++
+		}
+	}
+	m.cfg.Instances[m.cfg.CurrentInstance] = inst
+	m.setStatus(fmt.Sprintf("added %d group(s), syncing...", added))
+	return m, tea.Batch(saveConfigCmd(m.cfg, m.configPath), m.syncProjectsCmd())
 }
 
 func (m Model) dispatchBatch(msg components.DispatchMsg) (tea.Model, tea.Cmd) {
