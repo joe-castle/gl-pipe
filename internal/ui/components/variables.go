@@ -95,7 +95,7 @@ func (v *Variables) syncRows() {
 		rows = append(rows, table.Row{r.Key, value, string(r.Type), boolMark(r.Masked), boolMark(r.Protected)})
 	}
 	rows = append(rows, table.Row{"[ Dispatch → " + fmt.Sprint(len(v.Projects)) + " project(s) ]", "", "", "", ""})
-	v.table.SetRows(rows)
+	setRows(&v.table, rows)
 }
 
 func boolMark(b bool) string {

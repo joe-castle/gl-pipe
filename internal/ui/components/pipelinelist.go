@@ -159,7 +159,7 @@ func (p *PipelineList) syncPipeRows() {
 			formatDuration(pl.Duration),
 		}
 	}
-	p.pipeTable.SetRows(rows)
+	setRows(&p.pipeTable, rows)
 }
 
 func formatDuration(d interface{ Seconds() float64 }) string {
@@ -222,7 +222,7 @@ func (p *PipelineList) syncJobRows() {
 		}
 		rows[i] = table.Row{check, j.Stage, j.Name, string(j.Status), j.RunnerTag, retries, formatDuration(j.Duration)}
 	}
-	p.jobTable.SetRows(rows)
+	setRows(&p.jobTable, rows)
 }
 
 // HighlightedJob returns the job under the cursor in job-matrix mode.
@@ -254,6 +254,9 @@ func (p *PipelineList) SelectedJobs() []api.Job {
 // InJobs reports whether the job matrix (rather than the pipeline matrix)
 // is currently showing.
 func (p *PipelineList) InJobs() bool { return p.mode == modeJobs }
+
+// Count returns how many pipelines are currently in the matrix.
+func (p *PipelineList) Count() int { return len(p.pipelines) }
 
 func (p PipelineList) Update(msg tea.Msg) (PipelineList, tea.Cmd) {
 	km, isKey := msg.(tea.KeyMsg)

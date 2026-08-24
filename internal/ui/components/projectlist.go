@@ -108,7 +108,7 @@ func (p *ProjectList) syncRows() {
 		}
 		rows[i] = table.Row{check, proj.PathWithNamespace, ref}
 	}
-	p.table.SetRows(rows)
+	setRows(&p.table, rows)
 }
 
 // Highlighted returns the project currently under the cursor, if any.

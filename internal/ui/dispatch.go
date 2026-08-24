@@ -72,6 +72,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
+		case "enter":
+			if !textFocused {
+				if proj, ok := m.projectList.Highlighted(); ok {
+					id := m.newReqID()
+					m.genPipelines = id
+					m.loading = true
+					return m, pipelinesForProjectCmd(m.ctx, m.client, proj.ID, id)
+				}
+				return m, nil
+			}
 		}
 		var cmd tea.Cmd
 		m.projectList, cmd = m.projectList.Update(msg)

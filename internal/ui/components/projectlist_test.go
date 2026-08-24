@@ -42,6 +42,25 @@ func TestProjectList_ToggleSelect(t *testing.T) {
 	}
 }
 
+// TestProjectList_HighlightedRecoversAfterEmptyToNonEmpty is a regression
+// test for a bubbles/table quirk: SetRows only clamps the cursor downward,
+// so a table that starts with 0 rows (cursor forced to -1) and later gets
+// its first real rows is left with an invalid cursor forever — Highlighted
+// (and therefore every "Enter on the highlighted row" action) silently
+// fails from then on. This is exactly what "Enter does nothing" looked
+// like: the project list starts empty before the first sync completes.
+func TestProjectList_HighlightedRecoversAfterEmptyToNonEmpty(t *testing.T) {
+	p := NewProjectList()
+	p.SetProjects(nil) // simulates the pre-sync empty state
+
+	p.SetProjects([]api.Project{{ID: 42, PathWithNamespace: "backend/svc-a"}})
+
+	proj, ok := p.Highlighted()
+	if !ok || proj.ID != 42 {
+		t.Fatalf("expected project 42 highlighted after going from empty to non-empty, got %+v ok=%v", proj, ok)
+	}
+}
+
 func TestProjectList_SelectedProjectsFallsBackToHighlighted(t *testing.T) {
 	p := NewProjectList()
 	p.SetProjects([]api.Project{

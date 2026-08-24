@@ -109,6 +109,46 @@ func TestUpdate_DropsStaleJobsLoadedMsg(t *testing.T) {
 	}
 }
 
+// TestHandleKey_EnterOnProjectLoadsPipelines is a regression test: Enter on
+// a highlighted project in the explorer must actually drill into its
+// pipelines. pipelinesForProjectCmd existed but was never wired to any key
+// until this was reported as "nothing happens."
+func TestHandleKey_EnterOnProjectLoadsPipelines(t *testing.T) {
+	m := newTestModel(t)
+	m.projectList.SetProjects([]api.Project{{ID: 42, PathWithNamespace: "backend/svc-a"}})
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected Enter on a project to return a Cmd that loads its pipelines")
+	}
+	if mm.genPipelines == 0 {
+		t.Fatal("expected genPipelines to be set")
+	}
+	if !mm.loading {
+		t.Fatal("expected loading=true while pipelines load")
+	}
+}
+
+// TestUpdate_PipelinesLoadedReplacesNotAccumulates guards against drilling
+// into project B's pipelines showing project A's leftover rows from an
+// earlier visit (or from a batch trigger) mixed in.
+func TestUpdate_PipelinesLoadedReplacesNotAccumulates(t *testing.T) {
+	m := newTestModel(t)
+	m.pipelineList.AddOrUpdate(api.Pipeline{ID: 1, ProjectID: 99}) // leftover from elsewhere
+	m.genPipelines = 7
+
+	updated, _ := m.Update(pipelinesLoadedMsg{
+		reqID: 7, projectID: 42,
+		pipelines: []api.Pipeline{{ID: 2, ProjectID: 42}},
+	})
+	mm := updated.(Model)
+
+	if got := mm.pipelineList.Count(); got != 1 {
+		t.Fatalf("expected the matrix to be replaced with exactly 1 pipeline, got %d", got)
+	}
+}
+
 // TestUpdate_NoDefaultGroupsShowsStatusAndDoesNotCache is a regression test:
 // syncing with no default_groups configured must surface a clear status
 // message and must NOT stamp cacheIdx.SyncedAt, or a subsequent launch

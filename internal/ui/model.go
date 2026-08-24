@@ -333,10 +333,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setErr(msg.err)
 			return m, nil
 		}
-		for _, pl := range msg.pipelines {
-			m.pipelineList.AddOrUpdate(pl)
-		}
+		m.pipelineList.SetPipelines(msg.pipelines)
 		m.pane = panePipelines
+		name := m.projectNames[msg.projectID]
+		if len(msg.pipelines) == 0 {
+			m.setStatus("no pipelines found for " + name)
+		} else {
+			m.setStatus(fmt.Sprintf("%d pipeline(s) for %s", len(msg.pipelines), name))
+		}
 		return m, nil
 
 	case pipelineDetailMsg:

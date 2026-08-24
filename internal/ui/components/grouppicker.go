@@ -94,7 +94,7 @@ func (g *GroupPicker) syncRows() {
 		rows = append(rows, table.Row{check, grp.Name, grp.FullPath})
 	}
 	rows = append(rows, table.Row{fmt.Sprintf("[ Save %d group(s) ]", len(g.Selected)), "", ""})
-	g.table.SetRows(rows)
+	setRows(&g.table, rows)
 }
 
 func (g *GroupPicker) isSaveRow() bool {

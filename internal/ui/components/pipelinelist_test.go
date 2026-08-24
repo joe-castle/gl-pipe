@@ -26,6 +26,21 @@ func TestPipelineList_AddOrUpdateInsertsThenPatches(t *testing.T) {
 	}
 }
 
+// TestPipelineList_HighlightedRecoversAfterEmptyToNonEmpty mirrors the same
+// bubbles/table cursor bug for the pipeline matrix: e.g. drilling into a
+// project with zero pipelines, then drilling into one that has some.
+func TestPipelineList_HighlightedRecoversAfterEmptyToNonEmpty(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines(nil)
+
+	p.SetPipelines([]api.Pipeline{{ID: 1, ProjectID: 10}})
+
+	pl, ok := p.HighlightedPipeline()
+	if !ok || pl.ID != 1 {
+		t.Fatalf("expected pipeline 1 highlighted after going from empty to non-empty, got %+v ok=%v", pl, ok)
+	}
+}
+
 func TestPipelineList_SelectedPipelinesFallsBackToHighlighted(t *testing.T) {
 	p := NewPipelineList()
 	p.SetPipelines([]api.Pipeline{{ID: 1}, {ID: 2}})
