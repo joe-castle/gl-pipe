@@ -110,7 +110,7 @@ The project explorer only syncs projects from an instance's `default_groups` —
 | `/` | Fuzzy-filter projects by path |
 | `x` | Toggle multi-select on the highlighted project |
 | `T` | Lock the highlighted project's ref to its latest SemVer tag |
-| `Enter` | Drill into that project's pipelines |
+| `Enter` | View pipelines for the staged (`x`) projects together, or just the highlighted one if none are staged |
 
 ### Group discovery modal
 

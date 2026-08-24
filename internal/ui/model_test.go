@@ -130,12 +130,54 @@ func TestHandleKey_EnterOnProjectLoadsPipelines(t *testing.T) {
 	}
 }
 
-// TestUpdate_PipelinesLoadedReplacesNotAccumulates guards against drilling
-// into project B's pipelines showing project A's leftover rows from an
-// earlier visit (or from a batch trigger) mixed in.
-func TestUpdate_PipelinesLoadedReplacesNotAccumulates(t *testing.T) {
+// TestHandleKey_EnterOnStagedProjectsShowsAllTogether covers viewing
+// several projects' pipelines in one matrix: staging with 'x' and pressing
+// Enter should fetch and merge all of them, not just the highlighted one.
+func TestHandleKey_EnterOnStagedProjectsShowsAllTogether(t *testing.T) {
 	m := newTestModel(t)
-	m.pipelineList.AddOrUpdate(api.Pipeline{ID: 1, ProjectID: 99}) // leftover from elsewhere
+	m.projectList.SetProjects([]api.Project{
+		{ID: 10, PathWithNamespace: "a/b"},
+		{ID: 11, PathWithNamespace: "c/d"},
+		{ID: 12, PathWithNamespace: "e/f"},
+	})
+	m.projectList.Selected[10] = true
+	m.projectList.Selected[11] = true
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mm := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a Cmd batch loading pipelines for the staged projects")
+	}
+	if mm.pipelineList.Count() != 0 {
+		t.Fatalf("expected the matrix cleared at batch start, got %d rows", mm.pipelineList.Count())
+	}
+
+	// Both staged projects' responses arrive (order-independent) and merge
+	// into the same matrix; project 12 was never staged and never fetched.
+	updated, _ = mm.Update(pipelinesLoadedMsg{
+		reqID: mm.genPipelines, projectID: 11,
+		pipelines: []api.Pipeline{{ID: 2, ProjectID: 11}},
+	})
+	mm = updated.(Model)
+	updated, _ = mm.Update(pipelinesLoadedMsg{
+		reqID: mm.genPipelines, projectID: 10,
+		pipelines: []api.Pipeline{{ID: 1, ProjectID: 10}},
+	})
+	mm = updated.(Model)
+
+	if got := mm.pipelineList.Count(); got != 2 {
+		t.Fatalf("expected 2 pipelines merged from the 2 staged projects, got %d", got)
+	}
+}
+
+// TestUpdate_PipelinesLoadedClearsOnANewBatchButAccumulatesWithinOne
+// guards the two halves of the fix together: a fresh Enter must not show
+// leftovers from an earlier, unrelated view, but responses belonging to
+// the same batch (e.g. multiple staged projects) must merge, not clobber
+// each other.
+func TestUpdate_PipelinesLoadedClearsOnANewBatchButAccumulatesWithinOne(t *testing.T) {
+	m := newTestModel(t)
+	m.pipelineList.AddOrUpdate(api.Pipeline{ID: 1, ProjectID: 99}) // leftover from an earlier view
 	m.genPipelines = 7
 
 	updated, _ := m.Update(pipelinesLoadedMsg{
@@ -144,8 +186,22 @@ func TestUpdate_PipelinesLoadedReplacesNotAccumulates(t *testing.T) {
 	})
 	mm := updated.(Model)
 
-	if got := mm.pipelineList.Count(); got != 1 {
-		t.Fatalf("expected the matrix to be replaced with exactly 1 pipeline, got %d", got)
+	// The stale project-99 row is still here: the message handler itself
+	// doesn't clear anything, only starting a new batch does (see the
+	// staged-projects test above and openPipelinesForSelected).
+	if got := mm.pipelineList.Count(); got != 2 {
+		t.Fatalf("expected the leftover row plus the new one to accumulate within this batch, got %d", got)
+	}
+
+	// A second response in the SAME batch (e.g. another staged project)
+	// merges in rather than replacing.
+	updated, _ = mm.Update(pipelinesLoadedMsg{
+		reqID: 7, projectID: 43,
+		pipelines: []api.Pipeline{{ID: 3, ProjectID: 43}},
+	})
+	mm = updated.(Model)
+	if got := mm.pipelineList.Count(); got != 3 {
+		t.Fatalf("expected 3 pipelines accumulated within the batch, got %d", got)
 	}
 }
 

@@ -74,13 +74,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			if !textFocused {
-				if proj, ok := m.projectList.Highlighted(); ok {
-					id := m.newReqID()
-					m.genPipelines = id
-					m.loading = true
-					return m, pipelinesForProjectCmd(m.ctx, m.client, proj.ID, id)
-				}
-				return m, nil
+				return m.openPipelinesForSelected()
 			}
 		}
 		var cmd tea.Cmd
@@ -202,6 +196,30 @@ func (m *Model) focusedWebURL() string {
 		return proj.WebURL
 	}
 	return ""
+}
+
+// openPipelinesForSelected shows pipelines for every staged project
+// together in one matrix (falling back to just the highlighted project if
+// none are staged) — the same "staged, or highlighted" convention used by
+// the trigger modal. The matrix is cleared up front so a fresh Enter never
+// mixes rows left over from an earlier view; each project's pipelines are
+// then merged in as its own request completes, so the matrix fills in
+// incrementally rather than waiting on the slowest project.
+func (m Model) openPipelinesForSelected() (tea.Model, tea.Cmd) {
+	projects := m.projectList.SelectedProjects()
+	if len(projects) == 0 {
+		return m, nil
+	}
+	id := m.newReqID()
+	m.genPipelines = id
+	m.loading = true
+	m.pipelineList.SetPipelines(nil)
+
+	cmds := make([]tea.Cmd, 0, len(projects))
+	for _, proj := range projects {
+		cmds = append(cmds, pipelinesForProjectCmd(m.ctx, m.client, proj.ID, id))
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // saveChosenGroups merges the discovery picker's selection into the active

@@ -330,10 +330,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.loading = false
 		if msg.err != nil {
-			m.setErr(msg.err)
+			m.setErr(fmt.Errorf("loading pipelines for %s: %w", m.projectNames[msg.projectID], msg.err))
 			return m, nil
 		}
-		m.pipelineList.SetPipelines(msg.pipelines)
+		// Merge into whatever this generation's batch has already loaded
+		// from other staged projects — the matrix itself was cleared once
+		// when the batch started (see openPipelinesForSelected), so this
+		// never mixes in results from an earlier, unrelated view.
+		for _, pl := range msg.pipelines {
+			m.pipelineList.AddOrUpdate(pl)
+		}
 		m.pane = panePipelines
 		name := m.projectNames[msg.projectID]
 		if len(msg.pipelines) == 0 {
