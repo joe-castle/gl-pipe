@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"github.com/joeca/gl-pipe/internal/config"
 	"github.com/joeca/gl-pipe/internal/ui/components"
 )
+
+var errBoom = errors.New("boom")
 
 func newTestModel(t *testing.T) Model {
 	t.Helper()
@@ -94,6 +97,90 @@ func TestHandleLeaderAction_GTriggersGroupsLoad(t *testing.T) {
 	}
 	if mm.genGroups == 0 {
 		t.Fatal("expected genGroups to be set")
+	}
+}
+
+func TestHandleLeaderAction_BOpensRefSearch(t *testing.T) {
+	m := newTestModel(t)
+	updated, _ := m.Update(components.LeaderActionMsg{Key: "b"})
+	mm := updated.(Model)
+	if !mm.refSearch.Active {
+		t.Fatal("expected 'b' to open the ref search modal")
+	}
+}
+
+// TestRefSearchSubmit_SearchesEveryCachedProjectNotJustStaged is the core
+// of this feature: unlike Enter (which only looks at staged/highlighted
+// projects), submitting a ref search must query every project currently in
+// the cache, since the whole point is not having to already know which
+// repo the ref belongs to.
+func TestRefSearchSubmit_SearchesEveryCachedProjectNotJustStaged(t *testing.T) {
+	m := newTestModel(t)
+	m.cacheIdx.Projects = []api.Project{
+		{ID: 10, PathWithNamespace: "a/b"},
+		{ID: 11, PathWithNamespace: "c/d"},
+		{ID: 12, PathWithNamespace: "e/f"},
+	}
+	// deliberately nothing staged and nothing highlighted matters here
+
+	updated, cmd := m.Update(refSearchSubmitMsg{ref: "feature/login-fix"})
+	mm := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a Cmd batch searching every cached project")
+	}
+	if mm.pipelinesPending != 3 {
+		t.Fatalf("expected all 3 cached projects queried, got pipelinesPending=%d", mm.pipelinesPending)
+	}
+	if mm.pipelineList.Count() != 0 {
+		t.Fatalf("expected the matrix cleared at search start, got %d rows", mm.pipelineList.Count())
+	}
+}
+
+func TestRefSearchSubmit_NoCachedProjectsShowsStatusInsteadOfSearching(t *testing.T) {
+	m := newTestModel(t)
+	m.cacheIdx.Projects = nil
+
+	updated, cmd := m.Update(refSearchSubmitMsg{ref: "main"})
+	mm := updated.(Model)
+	if cmd != nil {
+		t.Fatal("expected no search Cmd when there are no cached projects")
+	}
+	if mm.statusMsg == "" {
+		t.Fatal("expected a status explaining nothing was searched")
+	}
+}
+
+// TestUpdate_PipelinesLoadedSummarizesOnceBatchCompletes guards the
+// per-response-flicker fix: with several projects in flight, the status
+// line should only report a summary once every response has arrived, not
+// on each individual (mostly-empty, for a ref search) response.
+func TestUpdate_PipelinesLoadedSummarizesOnceBatchCompletes(t *testing.T) {
+	m := newTestModel(t)
+	m.genPipelines = 9
+	m.pipelinesPending = 3
+
+	updated, _ := m.Update(pipelinesLoadedMsg{reqID: 9, projectID: 10, pipelines: nil})
+	mm := updated.(Model)
+	if mm.statusMsg != "" {
+		t.Fatalf("expected no status yet with responses still outstanding, got %q", mm.statusMsg)
+	}
+
+	updated, _ = mm.Update(pipelinesLoadedMsg{reqID: 9, projectID: 11, pipelines: []api.Pipeline{{ID: 1, ProjectID: 11}}})
+	mm = updated.(Model)
+	if mm.statusMsg != "" {
+		t.Fatalf("expected still no status with 1 response outstanding, got %q", mm.statusMsg)
+	}
+
+	updated, _ = mm.Update(pipelinesLoadedMsg{reqID: 9, projectID: 12, err: errBoom})
+	mm = updated.(Model)
+	if mm.pipelinesPending != 0 {
+		t.Fatalf("expected pipelinesPending drained to 0, got %d", mm.pipelinesPending)
+	}
+	if mm.statusMsg == "" {
+		t.Fatal("expected a summary status once the batch completes")
+	}
+	if mm.pipelineList.Count() != 1 {
+		t.Fatalf("expected the 1 successful project's pipeline in the matrix, got %d", mm.pipelineList.Count())
 	}
 }
 

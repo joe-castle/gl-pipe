@@ -58,6 +58,16 @@ type Model struct {
 	leaderMenu   components.LeaderMenu
 	presets      presetPicker
 	groupPicker  components.GroupPicker
+	refSearch    refSearch
+
+	// pipelinesPending/pipelinesErrored track a batch of concurrent
+	// pipelinesLoadedMsg responses (staged-projects view or a ref search
+	// across every known project) so the status line reports one clean
+	// summary on completion instead of flickering per-response — with
+	// dozens of projects most responses are empty misses, and showing
+	// each as its own status would bury (or overwrite) the real result.
+	pipelinesPending int
+	pipelinesErrored int
 
 	statusMsg string
 	statusErr bool
@@ -97,6 +107,7 @@ func New(ctx context.Context, cancel context.CancelFunc, cfg *config.Config, con
 		settings:     components.NewSettings(),
 		leaderMenu:   components.NewLeaderMenu(toComponentActions(LeaderActions)),
 		groupPicker:  components.NewGroupPicker(),
+		refSearch:    newRefSearch(),
 		projectNames: map[int]string{},
 	}
 	if cfg == nil {
@@ -310,6 +321,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case components.GroupsChosenMsg:
 		return m.saveChosenGroups(msg)
 
+	case refSearchSubmitMsg:
+		return m.searchPipelinesByRef(msg.ref)
+
 	case components.DispatchMsg:
 		return m.dispatchBatch(msg)
 
@@ -328,24 +342,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.reqID != m.genPipelines {
 			return m, nil
 		}
-		m.loading = false
-		if msg.err != nil {
-			m.setErr(fmt.Errorf("loading pipelines for %s: %w", m.projectNames[msg.projectID], msg.err))
-			return m, nil
-		}
 		// Merge into whatever this generation's batch has already loaded
-		// from other staged projects — the matrix itself was cleared once
-		// when the batch started (see openPipelinesForSelected), so this
-		// never mixes in results from an earlier, unrelated view.
-		for _, pl := range msg.pipelines {
-			m.pipelineList.AddOrUpdate(pl)
-		}
-		m.pane = panePipelines
-		name := m.projectNames[msg.projectID]
-		if len(msg.pipelines) == 0 {
-			m.setStatus("no pipelines found for " + name)
+		// from other projects — the matrix itself was cleared once when
+		// the batch started (see startPipelinesBatch), so this never mixes
+		// in results from an earlier, unrelated view.
+		if msg.err != nil {
+			m.pipelinesErrored++
 		} else {
-			m.setStatus(fmt.Sprintf("%d pipeline(s) for %s", len(msg.pipelines), name))
+			for _, pl := range msg.pipelines {
+				m.pipelineList.AddOrUpdate(pl)
+			}
+			m.pane = panePipelines
+		}
+		if m.pipelinesPending > 0 {
+			m.pipelinesPending--
+		}
+		// Report one summary on completion rather than per-response: a ref
+		// search can span dozens of projects, and most responses are empty
+		// misses — showing each as its own status would bury the result or
+		// leave the status line ending on an uninteresting miss.
+		if m.pipelinesPending == 0 {
+			m.loading = false
+			summary := fmt.Sprintf("%d pipeline(s) found", m.pipelineList.Count())
+			if m.pipelinesErrored > 0 {
+				summary += fmt.Sprintf(" (%d project(s) failed to load)", m.pipelinesErrored)
+			}
+			m.setStatus(summary)
 		}
 		return m, nil
 
@@ -478,6 +500,8 @@ func (m Model) View() string {
 		body = modalStyle.Render(m.presets.View())
 	case m.groupPicker.Active:
 		body = modalStyle.Render(m.groupPicker.View())
+	case m.refSearch.Active:
+		body = modalStyle.Render(m.refSearch.View())
 	case m.pane == panePipelines:
 		body = m.pipelineList.View()
 	default:

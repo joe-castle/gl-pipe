@@ -12,11 +12,28 @@ import (
 // Entries do not include the triggering user or duration; call GetPipeline to
 // enrich a specific row once it's visible.
 func (c *Client) ListPipelines(ctx context.Context, projectID int) ([]Pipeline, error) {
-	infos, _, err := c.gl.Pipelines.ListProjectPipelines(projectID, &gitlab.ListProjectPipelinesOptions{
+	return c.listPipelines(ctx, projectID, &gitlab.ListProjectPipelinesOptions{
 		ListOptions: gitlab.ListOptions{PerPage: 50},
 		OrderBy:     gitlab.Ptr("updated_at"),
 		Sort:        gitlab.Ptr("desc"),
-	}, gitlab.WithContext(ctx))
+	})
+}
+
+// ListPipelinesByRef returns pipelines for a project matching an exact ref
+// (branch or tag) name — GitLab's ref filter is an exact match, not a
+// substring search. Used to search for pipelines across many projects by
+// ref without first knowing which project they belong to.
+func (c *Client) ListPipelinesByRef(ctx context.Context, projectID int, ref string) ([]Pipeline, error) {
+	return c.listPipelines(ctx, projectID, &gitlab.ListProjectPipelinesOptions{
+		ListOptions: gitlab.ListOptions{PerPage: 20},
+		Ref:         gitlab.Ptr(ref),
+		OrderBy:     gitlab.Ptr("updated_at"),
+		Sort:        gitlab.Ptr("desc"),
+	})
+}
+
+func (c *Client) listPipelines(ctx context.Context, projectID int, opts *gitlab.ListProjectPipelinesOptions) ([]Pipeline, error) {
+	infos, _, err := c.gl.Pipelines.ListProjectPipelines(projectID, opts, gitlab.WithContext(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("listing pipelines for project %d: %w", projectID, err)
 	}

@@ -100,6 +100,18 @@ func pipelinesForProjectCmd(ctx context.Context, client *api.Client, projectID i
 	}
 }
 
+// pipelinesByRefCmd fetches one project's pipelines matching a specific
+// ref. It reports through the same pipelinesLoadedMsg as
+// pipelinesForProjectCmd, so a ref search across every known project reuses
+// the exact same accumulate-into-the-matrix handling as viewing staged
+// projects' pipelines.
+func pipelinesByRefCmd(ctx context.Context, client *api.Client, projectID int, ref string, id reqID) tea.Cmd {
+	return func() tea.Msg {
+		pipelines, err := client.ListPipelinesByRef(ctx, projectID, ref)
+		return pipelinesLoadedMsg{reqID: id, projectID: projectID, pipelines: pipelines, err: err}
+	}
+}
+
 func pipelineDetailCmd(ctx context.Context, client *api.Client, projectID, pipelineID int, id reqID) tea.Cmd {
 	return func() tea.Msg {
 		p, err := client.GetPipeline(ctx, projectID, pipelineID)

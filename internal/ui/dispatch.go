@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/joeca/gl-pipe/internal/api"
@@ -38,6 +39,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case m.groupPicker.Active:
 		var cmd tea.Cmd
 		m.groupPicker, cmd = m.groupPicker.Update(msg)
+		return m, cmd
+	case m.refSearch.Active:
+		var cmd tea.Cmd
+		m.refSearch, cmd = m.refSearch.Update(msg)
 		return m, cmd
 	case m.logViewer.Active:
 		var cmd tea.Cmd
@@ -134,6 +139,10 @@ func (m Model) handleLeaderAction(key string) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case "b":
+		m.refSearch.Open()
+		return m, nil
+
 	case "g":
 		id := m.newReqID()
 		m.genGroups = id
@@ -201,28 +210,55 @@ func (m *Model) focusedWebURL() string {
 	return ""
 }
 
-// openPipelinesForSelected shows pipelines for every staged project
-// together in one matrix (falling back to just the highlighted project if
-// none are staged) — the same "staged, or highlighted" convention used by
-// the trigger modal. The matrix is cleared up front so a fresh Enter never
-// mixes rows left over from an earlier view; each project's pipelines are
-// then merged in as its own request completes, so the matrix fills in
-// incrementally rather than waiting on the slowest project.
-func (m Model) openPipelinesForSelected() (tea.Model, tea.Cmd) {
-	projects := m.projectList.SelectedProjects()
+// startPipelinesBatch is the shared plumbing behind both "view staged
+// projects' pipelines" and "search by ref across every known project": it
+// clears the matrix, starts a new generation, tracks how many responses are
+// outstanding (so the status line can report one clean summary on
+// completion instead of flickering per-response — most projects miss a ref
+// search, and showing each miss as its own status would bury the result),
+// and fires one Cmd per project.
+func (m Model) startPipelinesBatch(projects []api.Project, fetch func(projectID int, id reqID) tea.Cmd) (tea.Model, tea.Cmd) {
 	if len(projects) == 0 {
 		return m, nil
 	}
 	id := m.newReqID()
 	m.genPipelines = id
 	m.loading = true
+	m.pipelinesPending = len(projects)
+	m.pipelinesErrored = 0
 	m.pipelineList.SetPipelines(nil)
 
 	cmds := make([]tea.Cmd, 0, len(projects))
 	for _, proj := range projects {
-		cmds = append(cmds, pipelinesForProjectCmd(m.ctx, m.client, proj.ID, id))
+		cmds = append(cmds, fetch(proj.ID, id))
 	}
 	return m, tea.Batch(cmds...)
+}
+
+// openPipelinesForSelected shows pipelines for every staged project
+// together in one matrix (falling back to just the highlighted project if
+// none are staged) — the same "staged, or highlighted" convention used by
+// the trigger modal.
+func (m Model) openPipelinesForSelected() (tea.Model, tea.Cmd) {
+	projects := m.projectList.SelectedProjects()
+	return m.startPipelinesBatch(projects, func(projectID int, id reqID) tea.Cmd {
+		return pipelinesForProjectCmd(m.ctx, m.client, projectID, id)
+	})
+}
+
+// searchPipelinesByRef searches every project currently in the cache for
+// pipelines on an exact ref, with no staging required — for finding
+// pipelines when you know the branch but not which repo it lives in (e.g.
+// several MRs sharing a source branch).
+func (m Model) searchPipelinesByRef(ref string) (tea.Model, tea.Cmd) {
+	if m.cacheIdx == nil || len(m.cacheIdx.Projects) == 0 {
+		m.setStatus("no synced projects to search — sync first (<space> r or <space> g)")
+		return m, nil
+	}
+	m.setStatus(fmt.Sprintf("searching %d project(s) for ref %q...", len(m.cacheIdx.Projects), ref))
+	return m.startPipelinesBatch(m.cacheIdx.Projects, func(projectID int, id reqID) tea.Cmd {
+		return pipelinesByRefCmd(m.ctx, m.client, projectID, ref, id)
+	})
 }
 
 // openJobsForPipelines shows job matrices for one or more pipelines
@@ -404,4 +440,59 @@ func (p presetPicker) View() string {
 	}
 	b.WriteString("\nj/k: move · enter: choose · esc: cancel")
 	return b.String()
+}
+
+// refSearchSubmitMsg is emitted when the user submits a ref to search for.
+type refSearchSubmitMsg struct {
+	ref string
+}
+
+// refSearch is the <Space> b modal: search for pipelines by an exact ref
+// name across every project currently in the cache, without needing to
+// already know (or stage) which project it belongs to.
+type refSearch struct {
+	Active bool
+	input  textinput.Model
+}
+
+func newRefSearch() refSearch {
+	in := textinput.New()
+	in.Prompt = "ref: "
+	in.Placeholder = "exact branch or tag name..."
+	in.Width = 40
+	return refSearch{input: in}
+}
+
+func (r *refSearch) Open() {
+	r.Active = true
+	r.input.SetValue("")
+	r.input.Focus()
+}
+
+func (r refSearch) Update(msg tea.Msg) (refSearch, tea.Cmd) {
+	if km, ok := msg.(tea.KeyMsg); ok {
+		switch km.String() {
+		case "esc":
+			r.Active = false
+			r.input.Blur()
+			return r, nil
+		case "enter":
+			ref := strings.TrimSpace(r.input.Value())
+			r.Active = false
+			r.input.Blur()
+			if ref == "" {
+				return r, nil
+			}
+			return r, func() tea.Msg { return refSearchSubmitMsg{ref: ref} }
+		}
+	}
+	var cmd tea.Cmd
+	r.input, cmd = r.input.Update(msg)
+	return r, cmd
+}
+
+func (r refSearch) View() string {
+	return "Search pipelines by ref across every synced project (exact match):\n\n" +
+		r.input.View() +
+		"\n\nenter: search · esc: cancel"
 }

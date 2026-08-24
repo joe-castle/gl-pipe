@@ -96,6 +96,7 @@ The project explorer only syncs projects from an instance's `default_groups` —
 |---|---|
 | `p` | Open the pipeline trigger modal for the staged (or highlighted) repo(s) |
 | `f` | Open the blob (code) search filter, scoped to a group |
+| `b` | Search for pipelines by an exact ref across every synced project — no need to know which repo it's in |
 | `v` | Pick a variable preset to prefill the next trigger |
 | `g` | Discover groups you belong to and add some to `default_groups` |
 | `s` | Open settings — switch instance profile, view TTL/presets |
@@ -133,7 +134,9 @@ The project explorer only syncs projects from an instance's `default_groups` —
 | `S` | Reverse sort direction without changing column |
 | `/` | Filter by ref, status, project, author, or SHA (substring, case-insensitive) |
 
-Sorted by Date, newest first, by default. The filter is handy for finding every pipeline on a given branch — e.g. several MRs sharing a source branch — or narrowing to `/failed` to see what's broken. Staging (`x`) is independent of the filter: pipelines you've staged stay staged even if a filter later hides them from view.
+Sorted by Date, newest first, by default. `/` narrows what's *already loaded* into the matrix — useful for narrowing to `/failed` or a ref you know is in there. Staging (`x`) is independent of the filter: pipelines you've staged stay staged even if a filter later hides them from view.
+
+If you don't know which project a branch lives in, `/` won't find it — it only searches what's currently loaded. Use `<Space> b` instead: it queries every synced project directly by exact ref, so you don't need to stage (or even know) the right repo first.
 
 ### Job matrix
 

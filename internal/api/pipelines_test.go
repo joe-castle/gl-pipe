@@ -30,6 +30,25 @@ func TestListPipelines_ParsesStatusAndRef(t *testing.T) {
 	}
 }
 
+func TestListPipelinesByRef_SendsRefFilter(t *testing.T) {
+	mux, client := setup(t)
+	mux.HandleFunc("/api/v4/projects/1/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		testMethod(t, r, http.MethodGet)
+		if got := r.URL.Query().Get("ref"); got != "feature/login-fix" {
+			t.Errorf("ref query param = %q, want feature/login-fix", got)
+		}
+		fmt.Fprint(w, `[{"id": 20, "project_id": 1, "status": "success", "ref": "feature/login-fix", "sha": "def456"}]`)
+	})
+
+	pipelines, err := client.ListPipelinesByRef(context.Background(), 1, "feature/login-fix")
+	if err != nil {
+		t.Fatalf("ListPipelinesByRef returned error: %v", err)
+	}
+	if len(pipelines) != 1 || pipelines[0].Ref != "feature/login-fix" {
+		t.Fatalf("unexpected pipelines: %+v", pipelines)
+	}
+}
+
 func TestGetPipeline_IncludesUserAndDuration(t *testing.T) {
 	mux, client := setup(t)
 	mux.HandleFunc("/api/v4/projects/1/pipelines/10", func(w http.ResponseWriter, r *http.Request) {

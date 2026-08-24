@@ -46,6 +46,7 @@ type LeaderAction struct {
 var LeaderActions = []LeaderAction{
 	{Key: "p", Label: "trigger pipeline"},
 	{Key: "f", Label: "blob search filter"},
+	{Key: "b", Label: "search pipelines by ref"},
 	{Key: "v", Label: "variable preset"},
 	{Key: "g", Label: "discover groups"},
 	{Key: "s", Label: "settings / instances"},
