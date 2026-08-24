@@ -225,7 +225,7 @@ func (p ProjectList) updateBrowse(msg tea.Msg) (ProjectList, tea.Cmd) {
 			return p, nil
 		case "x":
 			if proj, ok := p.Highlighted(); ok {
-				p.Selected[proj.ID] = !p.Selected[proj.ID]
+				toggleSet(p.Selected, proj.ID)
 				p.syncRows()
 			}
 			return p, nil

@@ -3,9 +3,11 @@ package components
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -86,12 +88,15 @@ func (f pipelineSortField) String() string {
 type PipelineList struct {
 	mode pipelineListMode
 
-	pipelines    []api.Pipeline
+	pipelines    []api.Pipeline // full set fetched into the matrix
+	filtered     []api.Pipeline // pipelines after the text filter + sort; what's actually shown
 	projectNames map[int]string
 	pipeTable    table.Model
-	Selected     map[int]bool // pipeline ID -> staged for bulk action
+	Selected     map[int]bool // pipeline ID -> staged for bulk action (against the full set)
 	sortField    pipelineSortField
 	sortDesc     bool
+	filtering    bool
+	filterInput  textinput.Model
 
 	jobs      []api.Job
 	jobTable  table.Model
@@ -127,6 +132,10 @@ func NewPipelineList() PipelineList {
 	}
 	jobTable := table.New(table.WithColumns(jobCols), table.WithFocused(true), table.WithHeight(15))
 
+	filter := textinput.New()
+	filter.Placeholder = "filter by ref, status, project, author, or SHA..."
+	filter.Prompt = "/ "
+
 	return PipelineList{
 		pipeTable:    pipeTable,
 		jobTable:     jobTable,
@@ -135,6 +144,7 @@ func NewPipelineList() PipelineList {
 		SelectedJ:    map[int]bool{},
 		sortField:    sortByDate,
 		sortDesc:     true,
+		filterInput:  filter,
 	}
 }
 
@@ -149,10 +159,15 @@ func (p *PipelineList) SetSize(w, h int) {
 // SetProjectNames supplies a project ID -> path lookup for the Project column.
 func (p *PipelineList) SetProjectNames(names map[int]string) { p.projectNames = names }
 
-// SetPipelines replaces the pipeline matrix contents.
+// SetPipelines replaces the pipeline matrix contents. The text filter is
+// reset — a fresh batch (e.g. re-pressing Enter for a different staged
+// set) shouldn't leave stale filter text quietly hiding the new rows.
 func (p *PipelineList) SetPipelines(pipelines []api.Pipeline) {
 	p.pipelines = pipelines
 	p.mode = modePipelines
+	p.filtering = false
+	p.filterInput.SetValue("")
+	p.filterInput.Blur()
 	p.syncPipeRows()
 }
 
@@ -204,9 +219,37 @@ func (p *PipelineList) ToggleSortDirection() {
 	p.syncPipeRows()
 }
 
+// pipelineMatches reports whether pl matches query as a case-insensitive
+// substring of its ref, status, project, author, or (short) SHA — covering
+// both "find pipelines for this branch" and "show only failed" in one box.
+func (p *PipelineList) pipelineMatches(pl api.Pipeline, query string) bool {
+	if query == "" {
+		return true
+	}
+	haystack := strings.ToLower(strings.Join([]string{
+		pl.Ref, string(pl.Status), p.projectNames[pl.ProjectID], pl.User, pl.SHA,
+	}, " "))
+	return strings.Contains(haystack, query)
+}
+
+func (p *PipelineList) filterPipelines() {
+	query := strings.ToLower(p.filterInput.Value())
+	if query == "" {
+		p.filtered = append([]api.Pipeline(nil), p.pipelines...)
+		return
+	}
+	filtered := make([]api.Pipeline, 0, len(p.pipelines))
+	for _, pl := range p.pipelines {
+		if p.pipelineMatches(pl, query) {
+			filtered = append(filtered, pl)
+		}
+	}
+	p.filtered = filtered
+}
+
 func (p *PipelineList) sortPipelines() {
 	less := func(i, j int) bool {
-		a, b := p.pipelines[i], p.pipelines[j]
+		a, b := p.filtered[i], p.filtered[j]
 		switch p.sortField {
 		case sortByDate:
 			return a.CreatedAt.Before(b.CreatedAt)
@@ -227,16 +270,17 @@ func (p *PipelineList) sortPipelines() {
 		}
 	}
 	if p.sortDesc {
-		sort.SliceStable(p.pipelines, func(i, j int) bool { return less(j, i) })
+		sort.SliceStable(p.filtered, func(i, j int) bool { return less(j, i) })
 	} else {
-		sort.SliceStable(p.pipelines, less)
+		sort.SliceStable(p.filtered, less)
 	}
 }
 
 func (p *PipelineList) syncPipeRows() {
+	p.filterPipelines()
 	p.sortPipelines()
-	rows := make([]table.Row, len(p.pipelines))
-	for i, pl := range p.pipelines {
+	rows := make([]table.Row, len(p.filtered))
+	for i, pl := range p.filtered {
 		check := " "
 		if p.Selected[pl.ID] {
 			check = "x"
@@ -293,10 +337,10 @@ func formatAge(t time.Time) string {
 // HighlightedPipeline returns the pipeline under the cursor, if any.
 func (p *PipelineList) HighlightedPipeline() (api.Pipeline, bool) {
 	i := p.pipeTable.Cursor()
-	if i < 0 || i >= len(p.pipelines) {
+	if i < 0 || i >= len(p.filtered) {
 		return api.Pipeline{}, false
 	}
-	return p.pipelines[i], true
+	return p.filtered[i], true
 }
 
 // SelectedPipelines returns staged pipelines, or the highlighted one if
@@ -435,18 +479,52 @@ func (p *PipelineList) SelectedJobs() []api.Job {
 // is currently showing.
 func (p *PipelineList) InJobs() bool { return p.mode == modeJobs }
 
-// Count returns how many pipelines are currently in the matrix.
+// Count returns how many pipelines are currently in the matrix (unfiltered).
 func (p *PipelineList) Count() int { return len(p.pipelines) }
 
+// HasTextFocus reports whether the pipeline-matrix filter input owns
+// keystrokes, so the root model knows not to steal <Space> for the leader
+// menu.
+func (p *PipelineList) HasTextFocus() bool { return p.mode == modePipelines && p.filtering }
+
+func (p PipelineList) updateFilter(msg tea.Msg) (PipelineList, tea.Cmd) {
+	if km, ok := msg.(tea.KeyMsg); ok {
+		switch km.String() {
+		case "esc":
+			p.filterInput.SetValue("")
+			p.filterInput.Blur()
+			p.filtering = false
+			p.syncPipeRows()
+			return p, nil
+		case "enter":
+			p.filterInput.Blur()
+			p.filtering = false
+			return p, nil
+		}
+	}
+	var cmd tea.Cmd
+	p.filterInput, cmd = p.filterInput.Update(msg)
+	p.syncPipeRows()
+	return p, cmd
+}
+
 func (p PipelineList) Update(msg tea.Msg) (PipelineList, tea.Cmd) {
+	if p.mode == modePipelines && p.filtering {
+		return p.updateFilter(msg)
+	}
+
 	km, isKey := msg.(tea.KeyMsg)
 	if isKey {
 		switch p.mode {
 		case modePipelines:
 			switch km.String() {
+			case "/":
+				p.filtering = true
+				p.filterInput.Focus()
+				return p, nil
 			case "x":
 				if pl, ok := p.HighlightedPipeline(); ok {
-					p.Selected[pl.ID] = !p.Selected[pl.ID]
+					toggleSet(p.Selected, pl.ID)
 					p.syncPipeRows()
 				}
 				return p, nil
@@ -474,7 +552,7 @@ func (p PipelineList) Update(msg tea.Msg) (PipelineList, tea.Cmd) {
 				return p, nil
 			case "x":
 				if j, ok := p.HighlightedJob(); ok {
-					p.SelectedJ[j.ID] = !p.SelectedJ[j.ID]
+					toggleSet(p.SelectedJ, j.ID)
 					p.syncJobRows()
 				}
 				return p, nil
@@ -516,7 +594,15 @@ func (p PipelineList) View() string {
 	if !p.sortDesc {
 		dir = "↑"
 	}
-	header := fmt.Sprintf("%d pipelines (%d staged) — sorted by %s %s (s: cycle, S: reverse)\n",
-		len(p.pipelines), len(p.Selected), p.sortField, dir)
+
+	count := fmt.Sprintf("%d pipelines", len(p.filtered))
+	if p.filterInput.Value() != "" {
+		count = fmt.Sprintf("%d/%d pipelines", len(p.filtered), len(p.pipelines))
+	}
+	header := fmt.Sprintf("%s (%d staged) — sorted by %s %s (s: cycle, S: reverse, /: filter)\n",
+		count, len(p.Selected), p.sortField, dir)
+	if p.filtering {
+		header = p.filterInput.View() + "\n" + header
+	}
 	return lipgloss.NewStyle().Render(header + p.pipeTable.View())
 }

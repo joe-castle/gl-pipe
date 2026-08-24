@@ -51,8 +51,8 @@ func TestPipelineList_DefaultSortIsDateDescending(t *testing.T) {
 		{ID: 3, CreatedAt: now.Add(-1 * time.Hour)},
 	})
 
-	if p.pipelines[0].ID != 2 || p.pipelines[1].ID != 3 || p.pipelines[2].ID != 1 {
-		t.Fatalf("expected newest-first order [2,3,1], got %v", pipelineIDs(p.pipelines))
+	if p.filtered[0].ID != 2 || p.filtered[1].ID != 3 || p.filtered[2].ID != 1 {
+		t.Fatalf("expected newest-first order [2,3,1], got %v", pipelineIDs(p.filtered))
 	}
 }
 
@@ -70,8 +70,8 @@ func TestPipelineList_CycleSortChangesFieldAndResetsDescending(t *testing.T) {
 		t.Fatalf("expected sortField=Ref sortDesc=true, got field=%v desc=%v", p.sortField, p.sortDesc)
 	}
 	// descending by Ref: "zzz" before "aaa"
-	if p.pipelines[0].ID != 1 || p.pipelines[1].ID != 2 {
-		t.Fatalf("expected [1,2] sorted desc by Ref, got %v", pipelineIDs(p.pipelines))
+	if p.filtered[0].ID != 1 || p.filtered[1].ID != 2 {
+		t.Fatalf("expected [1,2] sorted desc by Ref, got %v", pipelineIDs(p.filtered))
 	}
 }
 
@@ -90,8 +90,8 @@ func TestPipelineList_ToggleSortDirectionReversesWithoutChangingField(t *testing
 	if p.sortDesc {
 		t.Fatal("expected sortDesc=false after toggling")
 	}
-	if p.pipelines[0].ID != 1 || p.pipelines[1].ID != 2 {
-		t.Fatalf("expected [1,2] sorted asc by Ref, got %v", pipelineIDs(p.pipelines))
+	if p.filtered[0].ID != 1 || p.filtered[1].ID != 2 {
+		t.Fatalf("expected [1,2] sorted asc by Ref, got %v", pipelineIDs(p.filtered))
 	}
 }
 
@@ -106,6 +106,138 @@ func TestPipelineList_SortKeysDriveCycleAndToggle(t *testing.T) {
 	updated, _ = updated.Update(runeKey('S'))
 	if updated.sortDesc {
 		t.Fatal("expected 'S' to reverse to ascending")
+	}
+}
+
+func TestPipelineList_FilterMatchesRef(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{
+		{ID: 1, Ref: "feature/login-fix"},
+		{ID: 2, Ref: "main"},
+		{ID: 3, Ref: "feature/login-fix"}, // e.g. two MRs sharing a source branch
+	})
+
+	updated, _ := p.Update(runeKey('/'))
+	updated.filterInput.SetValue("login-fix")
+	updated.syncPipeRows()
+
+	if len(updated.filtered) != 2 {
+		t.Fatalf("expected 2 pipelines matching the ref, got %d: %v", len(updated.filtered), pipelineIDs(updated.filtered))
+	}
+}
+
+func TestPipelineList_FilterMatchesStatus(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{
+		{ID: 1, Status: api.StatusFailed},
+		{ID: 2, Status: api.StatusSuccess},
+		{ID: 3, Status: api.StatusFailed},
+	})
+
+	updated, _ := p.Update(runeKey('/'))
+	updated.filterInput.SetValue("failed")
+	updated.syncPipeRows()
+
+	if len(updated.filtered) != 2 {
+		t.Fatalf("expected 2 failed pipelines, got %d: %v", len(updated.filtered), pipelineIDs(updated.filtered))
+	}
+}
+
+func TestPipelineList_FilterMatchesProjectName(t *testing.T) {
+	p := NewPipelineList()
+	p.SetProjectNames(map[int]string{10: "backend/core-services", 11: "frontend/app"})
+	p.SetPipelines([]api.Pipeline{
+		{ID: 1, ProjectID: 10},
+		{ID: 2, ProjectID: 11},
+	})
+
+	updated, _ := p.Update(runeKey('/'))
+	updated.filterInput.SetValue("backend")
+	updated.syncPipeRows()
+
+	if len(updated.filtered) != 1 || updated.filtered[0].ID != 1 {
+		t.Fatalf("expected only the backend project's pipeline, got %v", pipelineIDs(updated.filtered))
+	}
+}
+
+func TestPipelineList_HighlightedUsesFilteredIndex(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{
+		{ID: 1, Ref: "main"},
+		{ID: 2, Ref: "feature-x"},
+	})
+
+	updated, _ := p.Update(runeKey('/'))
+	updated.filterInput.SetValue("feature")
+	updated.syncPipeRows()
+
+	pl, ok := updated.HighlightedPipeline()
+	if !ok || pl.ID != 2 {
+		t.Fatalf("expected the filtered pipeline highlighted, got %+v ok=%v", pl, ok)
+	}
+}
+
+func TestPipelineList_StagingSurvivesFilterChanges(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{
+		{ID: 1, Ref: "main"},
+		{ID: 2, Ref: "feature-x"},
+	})
+	p.Selected[1] = true
+
+	updated, _ := p.Update(runeKey('/'))
+	updated.filterInput.SetValue("feature") // filters project 1 out of view
+	updated.syncPipeRows()
+
+	got := updated.SelectedPipelines()
+	if len(got) != 1 || got[0].ID != 1 {
+		t.Fatalf("expected staged pipeline 1 to still be staged despite being filtered out of view, got %+v", got)
+	}
+}
+
+func TestPipelineList_EscClearsFilterAndShowsEverythingAgain(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{{ID: 1, Ref: "main"}, {ID: 2, Ref: "feature-x"}})
+
+	updated, _ := p.Update(runeKey('/'))
+	updated.filterInput.SetValue("feature")
+	updated.syncPipeRows()
+	if len(updated.filtered) != 1 {
+		t.Fatalf("expected filter to narrow to 1, got %d", len(updated.filtered))
+	}
+
+	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if updated.filtering {
+		t.Fatal("expected esc to exit filtering mode")
+	}
+	if len(updated.filtered) != 2 {
+		t.Fatalf("expected esc to clear the filter and show both pipelines again, got %d", len(updated.filtered))
+	}
+}
+
+func TestPipelineList_HasTextFocusWhileFiltering(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{{ID: 1}})
+
+	if p.HasTextFocus() {
+		t.Fatal("should not have text focus initially")
+	}
+	updated, _ := p.Update(runeKey('/'))
+	if !updated.HasTextFocus() {
+		t.Fatal("expected text focus after '/'")
+	}
+}
+
+func TestPipelineList_NewBatchResetsFilter(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{{ID: 1, Ref: "main"}})
+	updated, _ := p.Update(runeKey('/'))
+	updated.filterInput.SetValue("something")
+
+	updated.SetPipelines([]api.Pipeline{{ID: 2, Ref: "main"}})
+
+	if updated.filtering || updated.filterInput.Value() != "" {
+		t.Fatalf("expected a fresh SetPipelines to reset the filter, got filtering=%v value=%q", updated.filtering, updated.filterInput.Value())
 	}
 }
 
@@ -223,6 +355,36 @@ func TestPipelineList_FindPipeline(t *testing.T) {
 	}
 	if _, ok := p.FindPipeline(999); ok {
 		t.Fatal("expected FindPipeline to fail for an unknown ID")
+	}
+}
+
+// TestPipelineList_ToggleSelectDoesNotLeakCount and
+// TestPipelineList_ToggleJobDoesNotLeakCount guard the same toggleSet fix
+// at the pipeline-matrix and job-matrix call sites.
+func TestPipelineList_ToggleSelectDoesNotLeakCount(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{{ID: 1}})
+
+	updated := p
+	updated, _ = updated.Update(runeKey('x'))
+	updated, _ = updated.Update(runeKey('x'))
+
+	if len(updated.Selected) != 0 {
+		t.Fatalf("expected Selected empty after toggle on/off, got %+v", updated.Selected)
+	}
+}
+
+func TestPipelineList_ToggleJobDoesNotLeakCount(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{{ID: 1}})
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 100}})
+
+	updated := p
+	updated, _ = updated.Update(runeKey('x'))
+	updated, _ = updated.Update(runeKey('x'))
+
+	if len(updated.SelectedJ) != 0 {
+		t.Fatalf("expected SelectedJ empty after toggle on/off, got %+v", updated.SelectedJ)
 	}
 }
 

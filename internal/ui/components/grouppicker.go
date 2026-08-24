@@ -121,7 +121,7 @@ func (g GroupPicker) Update(msg tea.Msg) (GroupPicker, tea.Cmd) {
 		case "x":
 			if !g.isSaveRow() {
 				grp := g.filtered[g.table.Cursor()]
-				g.Selected[grp.FullPath] = !g.Selected[grp.FullPath]
+				toggleSet(g.Selected, grp.FullPath)
 				g.syncRows()
 			}
 			return g, nil

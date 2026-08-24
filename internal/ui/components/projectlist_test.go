@@ -61,6 +61,44 @@ func TestProjectList_HighlightedRecoversAfterEmptyToNonEmpty(t *testing.T) {
 	}
 }
 
+// TestProjectList_ToggleSelectDoesNotLeakCount is a regression test: 'x'
+// used to set Selected[id] = false rather than delete the key, so the map
+// entry (and therefore len(Selected), the "staged" count shown to the
+// user) never went back down after toggling the same project off.
+func TestProjectList_ToggleSelectDoesNotLeakCount(t *testing.T) {
+	p := NewProjectList()
+	p.SetProjects([]api.Project{{ID: 1, PathWithNamespace: "a/b"}})
+
+	updated := p
+	for i := 0; i < 5; i++ {
+		updated, _ = updated.Update(runeKey('x')) // on
+		updated, _ = updated.Update(runeKey('x')) // off
+	}
+
+	if len(updated.Selected) != 0 {
+		t.Fatalf("expected Selected empty after repeated toggle on/off, got %d entries: %+v", len(updated.Selected), updated.Selected)
+	}
+}
+
+// TestProjectList_SelectedProjectsFallsBackAfterFullUnstage guards the
+// knock-on effect of the same bug: SelectedProjects()'s "staged, or
+// highlighted fallback" convention relies on len(Selected) == 0 meaning
+// "nothing staged" — with the leaked-key bug, unstaging the only staged
+// project left a stale false entry, len(Selected) stayed 1, the fallback
+// never engaged, and the filtered result was silently empty.
+func TestProjectList_SelectedProjectsFallsBackAfterFullUnstage(t *testing.T) {
+	p := NewProjectList()
+	p.SetProjects([]api.Project{{ID: 1, PathWithNamespace: "a/b"}})
+
+	updated, _ := p.Update(runeKey('x'))      // stage
+	updated, _ = updated.Update(runeKey('x')) // unstage
+
+	got := updated.SelectedProjects()
+	if len(got) != 1 || got[0].ID != 1 {
+		t.Fatalf("expected fallback to the highlighted project after full unstage, got %+v", got)
+	}
+}
+
 func TestProjectList_SelectedProjectsFallsBackToHighlighted(t *testing.T) {
 	p := NewProjectList()
 	p.SetProjects([]api.Project{

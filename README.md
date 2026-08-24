@@ -131,8 +131,9 @@ The project explorer only syncs projects from an instance's `default_groups` —
 | `K` | Bulk cancel the staged (or highlighted) pipeline(s) |
 | `s` | Cycle the sort column (Date → Project → Status → Ref → SHA → Author → Duration) |
 | `S` | Reverse sort direction without changing column |
+| `/` | Filter by ref, status, project, author, or SHA (substring, case-insensitive) |
 
-Sorted by Date, newest first, by default.
+Sorted by Date, newest first, by default. The filter is handy for finding every pipeline on a given branch — e.g. several MRs sharing a source branch — or narrowing to `/failed` to see what's broken. Staging (`x`) is independent of the filter: pipelines you've staged stay staged even if a filter later hides them from view.
 
 ### Job matrix
 

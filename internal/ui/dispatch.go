@@ -53,7 +53,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	textFocused := m.pane == paneExplorer && m.projectList.HasTextFocus()
+	textFocused := (m.pane == paneExplorer && m.projectList.HasTextFocus()) ||
+		(m.pane == panePipelines && m.pipelineList.HasTextFocus())
 	if msg.String() == " " && !textFocused {
 		m.leaderMenu.Open()
 		return m, nil
@@ -84,10 +85,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "tab", "shift+tab":
-		m.pane = paneExplorer
-		return m, nil
+		if !textFocused {
+			m.pane = paneExplorer
+			return m, nil
+		}
 	case "esc":
-		if !m.pipelineList.InJobs() {
+		if !textFocused && !m.pipelineList.InJobs() {
 			m.pane = paneExplorer
 			return m, nil
 		}

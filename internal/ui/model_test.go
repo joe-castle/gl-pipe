@@ -330,6 +330,23 @@ func TestHandleKey_SpaceGoesToFilterInputWhenFocused(t *testing.T) {
 	}
 }
 
+// TestHandleKey_SpaceGoesToPipelineFilterInputWhenFocused mirrors the
+// explorer carve-out for the pipeline matrix's own filter input.
+func TestHandleKey_SpaceGoesToPipelineFilterInputWhenFocused(t *testing.T) {
+	m := newTestModel(t)
+	m.pane = panePipelines
+	m.pipelineList.SetPipelines([]api.Pipeline{{ID: 1}})
+
+	updated, _ := m.Update(runeKey('/'))
+	mm := updated.(Model)
+
+	updated, _ = mm.Update(runeKey(' '))
+	mm = updated.(Model)
+	if mm.leaderMenu.Active {
+		t.Fatal("space should not open the leader menu while the pipeline filter input is focused")
+	}
+}
+
 // TestHandleKey_ModalTakesPrecedenceOverLeaderMenu exercises invariant #4's
 // top rule: an active modal is dispatched to before the leader menu, even
 // if the leader menu also happens to be open.
