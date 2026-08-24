@@ -1,0 +1,101 @@
+// Package api wraps the GitLab client-go SDK behind domain types so the UI
+// layer never depends on gitlab.* structs directly.
+package api
+
+import "time"
+
+// Project is a GitLab project (repository).
+type Project struct {
+	ID                int
+	Name              string
+	PathWithNamespace string
+	WebURL            string
+	DefaultBranch     string
+}
+
+// Ref is a branch or tag.
+type Ref struct {
+	Name      string
+	IsTag     bool
+	CommitSHA string
+}
+
+// PipelineStatus mirrors GitLab's pipeline/job status strings.
+type PipelineStatus string
+
+const (
+	StatusCreated  PipelineStatus = "created"
+	StatusWaiting  PipelineStatus = "waiting_for_resource"
+	StatusPending  PipelineStatus = "pending"
+	StatusRunning  PipelineStatus = "running"
+	StatusSuccess  PipelineStatus = "success"
+	StatusFailed   PipelineStatus = "failed"
+	StatusCanceled PipelineStatus = "canceled"
+	StatusSkipped  PipelineStatus = "skipped"
+	StatusManual   PipelineStatus = "manual"
+)
+
+// Pipeline is a single CI/CD pipeline run on a project.
+type Pipeline struct {
+	ID        int
+	ProjectID int
+	IID       int
+	Status    PipelineStatus
+	Ref       string
+	SHA       string
+	WebURL    string
+	User      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	Duration  time.Duration
+}
+
+// Job is a single job within a pipeline.
+type Job struct {
+	ID         int
+	ProjectID  int
+	PipelineID int
+	Name       string
+	Stage      string
+	Status     PipelineStatus
+	RunnerTag  string
+	RetryCount int
+	WebURL     string
+	Duration   time.Duration
+}
+
+// VariableType matches GitLab's pipeline variable types.
+type VariableType string
+
+const (
+	VarTypeEnv  VariableType = "env_var"
+	VarTypeFile VariableType = "file"
+)
+
+// Variable is a pipeline trigger variable.
+type Variable struct {
+	Key       string
+	Value     string
+	Type      VariableType
+	Masked    bool
+	Protected bool
+}
+
+// BlobHit is one match from a GitLab blob (code) search.
+type BlobHit struct {
+	ProjectID   int
+	ProjectPath string
+	Path        string
+	Ref         string
+	StartLine   int
+	Snippet     string
+}
+
+// LogChunk is an incremental slice of a job's trace output.
+type LogChunk struct {
+	JobID   int
+	Offset  int
+	Content string
+	Done    bool
+	Err     error
+}

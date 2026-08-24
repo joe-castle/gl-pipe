@@ -1,0 +1,5 @@
+/gl-pipe
+/gl-pipe.exe
+/gl-pipe-*
+*.exe
+config.yaml
