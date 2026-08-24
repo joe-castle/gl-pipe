@@ -47,9 +47,6 @@ func (m *Model) syncProjectsCmd() tea.Cmd {
 	client := m.client
 	ctx := m.ctx
 	return func() tea.Msg {
-		if len(groups) == 0 {
-			return projectsSyncedMsg{reqID: id, instance: instance, err: nil}
-		}
 		seen := map[int]bool{}
 		var all []api.Project
 		for _, g := range groups {

@@ -184,7 +184,7 @@ func (m Model) Init() tea.Cmd {
 	if m.view == viewWizard {
 		return nil
 	}
-	if m.cacheIdx.Stale(m.cfg.TTL()) {
+	if m.cacheIdx.Stale(m.cfg.TTL()) || len(m.cacheIdx.Projects) == 0 {
 		return m.syncProjectsCmd()
 	}
 	return nil
@@ -247,10 +247,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setErr(msg.err)
 			return m, nil
 		}
+		inst, instErr := m.cfg.Active()
+		if instErr == nil && len(inst.DefaultGroups) == 0 {
+			// Deliberately not cached as a "fresh" sync (invariant: an
+			// unconfigured instance must keep re-surfacing this status on
+			// every launch/refresh, never silently settle into an empty
+			// cache that looks the same as a real zero-project group).
+			m.setStatus("no default_groups configured for " + msg.instance + " — add some in config.yaml, then <space> r to sync")
+			return m, nil
+		}
 		m.cacheIdx = &cache.Index{Instance: msg.instance, SyncedAt: time.Now(), Projects: msg.projects}
 		m.projectList.SetProjects(msg.projects)
 		m.rebuildProjectNames()
-		m.setStatus(fmt.Sprintf("synced %d projects", len(msg.projects)))
+		m.setStatus(fmt.Sprintf("synced %d projects from %d group(s)", len(msg.projects), len(inst.DefaultGroups)))
 		return m, saveCacheCmd(m.cacheIdx, m.instanceCachePath())
 
 	case blobSearchResultsMsg:

@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -13,10 +14,15 @@ import (
 
 func newTestModel(t *testing.T) Model {
 	t.Helper()
+	return newTestModelWithGroups(t, []string{"backend"})
+}
+
+func newTestModelWithGroups(t *testing.T, groups []string) Model {
+	t.Helper()
 	cfg := &config.Config{
 		CurrentInstance: "test",
 		Instances: map[string]config.Instance{
-			"test": {URL: "http://127.0.0.1:1", Token: "glpat-test"},
+			"test": {URL: "http://127.0.0.1:1", Token: "glpat-test", DefaultGroups: groups},
 		},
 		Cache: config.CacheConfig{TTLMinutes: 60},
 	}
@@ -65,6 +71,40 @@ func TestUpdate_DropsStaleJobsLoadedMsg(t *testing.T) {
 	mm := updated.(Model)
 	if mm.loading {
 		t.Fatal("a stale jobsLoadedMsg should be dropped before touching loading state")
+	}
+}
+
+// TestUpdate_NoDefaultGroupsShowsStatusAndDoesNotCache is a regression test:
+// syncing with no default_groups configured must surface a clear status
+// message and must NOT stamp cacheIdx.SyncedAt, or a subsequent launch
+// would see a "fresh" empty cache and silently show nothing — no projects,
+// no error, no explanation — exactly the bug this guards against.
+func TestUpdate_NoDefaultGroupsShowsStatusAndDoesNotCache(t *testing.T) {
+	m := newTestModelWithGroups(t, nil)
+	m.genProjects = 1
+
+	updated, _ := m.Update(projectsSyncedMsg{reqID: 1, instance: "test", projects: nil})
+	mm := updated.(Model)
+
+	if mm.statusMsg == "" || mm.statusErr {
+		t.Fatalf("expected a neutral, non-error status message, got %q (err=%v)", mm.statusMsg, mm.statusErr)
+	}
+	if !mm.cacheIdx.SyncedAt.IsZero() {
+		t.Fatal("an unconfigured sync must not stamp SyncedAt, or the empty cache looks permanently fresh")
+	}
+}
+
+// TestInit_ResyncsWhenCachedProjectListIsEmpty is a regression test for the
+// same bug from the other direction: even a cache file with a recent
+// SyncedAt (e.g. written before this fix, or before default_groups was
+// configured) must not block a resync while it holds zero projects.
+func TestInit_ResyncsWhenCachedProjectListIsEmpty(t *testing.T) {
+	m := newTestModel(t)
+	m.cacheIdx.SyncedAt = time.Now() // looks maximally fresh
+	m.cacheIdx.Projects = nil
+
+	if cmd := m.Init(); cmd == nil {
+		t.Fatal("Init should resync when the cached project list is empty, regardless of TTL freshness")
 	}
 }
 
