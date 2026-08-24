@@ -150,8 +150,34 @@ func NewPipelineList() PipelineList {
 
 func (p *PipelineList) SetSize(w, h int) {
 	p.width, p.height = w, h
+
+	const checkW, statusW, refW, shaW, authorW, durationW, dateW = 3, 12, 16, 10, 12, 10, 12
+	p.pipeTable.SetColumns([]table.Column{
+		{Title: "", Width: checkW},
+		{Title: "Project", Width: flexColumnWidth(w, []int{checkW, statusW, refW, shaW, authorW, durationW, dateW}, 18)},
+		{Title: "Status", Width: statusW},
+		{Title: "Ref", Width: refW},
+		{Title: "SHA", Width: shaW},
+		{Title: "Author", Width: authorW},
+		{Title: "Duration", Width: durationW},
+		{Title: "Date", Width: dateW},
+	})
 	p.pipeTable.SetWidth(w)
 	p.pipeTable.SetHeight(h - 3)
+
+	const pipelineW, stageW, jobStatusW, runnerW, retriesW, jobDurationW = 9, 12, 12, 12, 7, 9
+	projectW, jobW := splitFlexWidth(w, []int{checkW, pipelineW, stageW, jobStatusW, runnerW, retriesW, jobDurationW}, 0.4, 14, 16)
+	p.jobTable.SetColumns([]table.Column{
+		{Title: "", Width: checkW},
+		{Title: "Project", Width: projectW},
+		{Title: "Pipeline", Width: pipelineW},
+		{Title: "Stage", Width: stageW},
+		{Title: "Job", Width: jobW},
+		{Title: "Status", Width: jobStatusW},
+		{Title: "Runner", Width: runnerW},
+		{Title: "Retries", Width: retriesW},
+		{Title: "Duration", Width: jobDurationW},
+	})
 	p.jobTable.SetWidth(w)
 	p.jobTable.SetHeight(h - 3)
 }

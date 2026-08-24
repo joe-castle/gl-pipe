@@ -141,6 +141,12 @@ func (p *ProjectList) SelectedProjects() []api.Project {
 
 func (p *ProjectList) SetSize(w, h int) {
 	p.width, p.height = w, h
+	const checkW, refW = 3, 20
+	p.table.SetColumns([]table.Column{
+		{Title: "", Width: checkW},
+		{Title: "Project", Width: flexColumnWidth(w, []int{checkW, refW}, 20)},
+		{Title: "Ref", Width: refW},
+	})
 	p.table.SetWidth(w)
 	p.table.SetHeight(h - 4)
 }
