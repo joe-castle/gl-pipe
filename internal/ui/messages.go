@@ -45,6 +45,24 @@ type groupsLoadedMsg struct {
 	err    error
 }
 
+// myMRsLoadedMsg carries the result of a global "my MRs" fetch (<Space> m)
+// — a single request, so it replaces rather than accumulates.
+type myMRsLoadedMsg struct {
+	reqID reqID
+	mrs   []api.MergeRequest
+	err   error
+}
+
+// projectMRsLoadedMsg carries one project's MRs from a batch fetch across
+// staged projects (M on the explorer) — merged in, mirroring
+// pipelinesLoadedMsg's accumulate-within-a-batch handling.
+type projectMRsLoadedMsg struct {
+	reqID     reqID
+	projectID int
+	mrs       []api.MergeRequest
+	err       error
+}
+
 // refsLoadedMsg carries branches+tags for the ref picker.
 type refsLoadedMsg struct {
 	reqID     reqID

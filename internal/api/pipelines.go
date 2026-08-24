@@ -37,6 +37,10 @@ func (c *Client) listPipelines(ctx context.Context, projectID int, opts *gitlab.
 	if err != nil {
 		return nil, fmt.Errorf("listing pipelines for project %d: %w", projectID, err)
 	}
+	return toPipelines(infos), nil
+}
+
+func toPipelines(infos []*gitlab.PipelineInfo) []Pipeline {
 	out := make([]Pipeline, 0, len(infos))
 	for _, p := range infos {
 		out = append(out, Pipeline{
@@ -51,7 +55,7 @@ func (c *Client) listPipelines(ctx context.Context, projectID int, opts *gitlab.
 			UpdatedAt: timeOrZero(p.UpdatedAt),
 		})
 	}
-	return out, nil
+	return out
 }
 
 // GetPipeline fetches full detail for one pipeline, including the triggering

@@ -109,6 +109,84 @@ func TestHandleLeaderAction_BOpensRefSearch(t *testing.T) {
 	}
 }
 
+func TestHandleLeaderAction_MTriggersMyMRsLoad(t *testing.T) {
+	m := newTestModel(t)
+	updated, cmd := m.Update(components.LeaderActionMsg{Key: "m"})
+	mm := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a Cmd to load 'my MRs'")
+	}
+	if mm.genMRs == 0 {
+		t.Fatal("expected genMRs to be set")
+	}
+}
+
+// TestHandleKey_CapitalMOpensMRsForStagedProjects covers the per-project
+// MR fetch: staging projects and pressing M should batch-fetch each
+// project's MRs into the same modal, not just the highlighted one.
+func TestHandleKey_CapitalMOpensMRsForStagedProjects(t *testing.T) {
+	m := newTestModel(t)
+	m.projectList.SetProjects([]api.Project{
+		{ID: 10, PathWithNamespace: "a/b"},
+		{ID: 11, PathWithNamespace: "c/d"},
+	})
+	m.projectList.Selected[10] = true
+	m.projectList.Selected[11] = true
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	mm := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a Cmd batch loading MRs for the staged projects")
+	}
+	if mm.mrsPending != 2 {
+		t.Fatalf("expected both staged projects queried, got mrsPending=%d", mm.mrsPending)
+	}
+}
+
+// TestUpdate_ProjectMRsLoadedAccumulatesAndSummarizes mirrors the pipeline
+// batch-completion test: merges across projects, one summary at the end.
+func TestUpdate_ProjectMRsLoadedAccumulatesAndSummarizes(t *testing.T) {
+	m := newTestModel(t)
+	m.genMRs = 9
+	m.mrsPending = 2
+
+	updated, _ := m.Update(projectMRsLoadedMsg{reqID: 9, projectID: 10, mrs: []api.MergeRequest{{ID: 1, ProjectID: 10}}})
+	mm := updated.(Model)
+	if mm.statusMsg != "" {
+		t.Fatalf("expected no status yet with a response outstanding, got %q", mm.statusMsg)
+	}
+
+	updated, _ = mm.Update(projectMRsLoadedMsg{reqID: 9, projectID: 11, mrs: []api.MergeRequest{{ID: 2, ProjectID: 11}}})
+	mm = updated.(Model)
+	if mm.mrsPending != 0 {
+		t.Fatalf("expected mrsPending drained to 0, got %d", mm.mrsPending)
+	}
+	if mm.mrList.Count() != 2 {
+		t.Fatalf("expected both projects' MRs merged, got %d", mm.mrList.Count())
+	}
+	if mm.statusMsg == "" {
+		t.Fatal("expected a summary status once the batch completes")
+	}
+}
+
+// TestUpdate_MRsChosenJumpsToPipelines is the payoff: choosing MR(s)
+// reuses the exact same pipeline batch machinery as staged-project and
+// ref-search pipeline views.
+func TestUpdate_MRsChosenJumpsToPipelines(t *testing.T) {
+	m := newTestModel(t)
+	updated, cmd := m.Update(components.MRsChosenMsg{MRs: []api.MergeRequest{
+		{ID: 1, IID: 5, ProjectID: 10},
+		{ID: 2, IID: 6, ProjectID: 11},
+	}})
+	mm := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a Cmd batch loading the MRs' pipelines")
+	}
+	if mm.pipelinesPending != 2 {
+		t.Fatalf("expected both MRs' pipelines queried, got pipelinesPending=%d", mm.pipelinesPending)
+	}
+}
+
 // TestRefSearchSubmit_SearchesEveryCachedProjectNotJustStaged is the core
 // of this feature: unlike Enter (which only looks at staged/highlighted
 // projects), submitting a ref search must query every project currently in

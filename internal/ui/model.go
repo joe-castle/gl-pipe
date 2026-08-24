@@ -59,15 +59,23 @@ type Model struct {
 	presets      presetPicker
 	groupPicker  components.GroupPicker
 	refSearch    refSearch
+	mrList       components.MRList
 
 	// pipelinesPending/pipelinesErrored track a batch of concurrent
-	// pipelinesLoadedMsg responses (staged-projects view or a ref search
-	// across every known project) so the status line reports one clean
-	// summary on completion instead of flickering per-response — with
-	// dozens of projects most responses are empty misses, and showing
-	// each as its own status would bury (or overwrite) the real result.
+	// pipelinesLoadedMsg responses (staged-projects view, a ref search
+	// across every known project, or an MR selection's pipelines) so the
+	// status line reports one clean summary on completion instead of
+	// flickering per-response — with dozens of projects most responses are
+	// empty misses, and showing each as its own status would bury (or
+	// overwrite) the real result.
 	pipelinesPending int
 	pipelinesErrored int
+
+	// mrsPending/mrsErrored is the same tracking for a project-scoped MR
+	// fetch batch (M on the explorer, across staged projects). "My MRs"
+	// (<Space> m) is a single global request and doesn't need this.
+	mrsPending int
+	mrsErrored int
 
 	statusMsg string
 	statusErr bool
@@ -81,6 +89,7 @@ type Model struct {
 	genJobs      reqID
 	genLogs      reqID
 	genGroups    reqID
+	genMRs       reqID
 
 	logCancel context.CancelFunc
 	logJobURL string
@@ -108,6 +117,7 @@ func New(ctx context.Context, cancel context.CancelFunc, cfg *config.Config, con
 		leaderMenu:   components.NewLeaderMenu(toComponentActions(LeaderActions)),
 		groupPicker:  components.NewGroupPicker(),
 		refSearch:    newRefSearch(),
+		mrList:       components.NewMRList(),
 		projectNames: map[int]string{},
 	}
 	if cfg == nil {
@@ -212,6 +222,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.projectList.SetSize(msg.Width, msg.Height-4)
 		m.pipelineList.SetSize(msg.Width, msg.Height-4)
 		m.logViewer.SetSize(msg.Width, msg.Height-4)
+		m.mrList.SetSize(msg.Width, msg.Height-4)
 		m.leaderMenu.Width = msg.Width
 		return m, nil
 
@@ -320,6 +331,45 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case components.GroupsChosenMsg:
 		return m.saveChosenGroups(msg)
+
+	case myMRsLoadedMsg:
+		if msg.reqID != m.genMRs {
+			return m, nil
+		}
+		m.loading = false
+		if msg.err != nil {
+			m.setErr(msg.err)
+			return m, nil
+		}
+		m.mrList.SetProjectNames(m.projectNames)
+		m.mrList.SetMRs(msg.mrs)
+		m.setStatus(fmt.Sprintf("%d merge request(s)", len(msg.mrs)))
+		return m, nil
+
+	case projectMRsLoadedMsg:
+		if msg.reqID != m.genMRs {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.mrsErrored++
+		} else {
+			m.mrList.AddMRs(msg.mrs)
+		}
+		if m.mrsPending > 0 {
+			m.mrsPending--
+		}
+		if m.mrsPending == 0 {
+			m.loading = false
+			summary := fmt.Sprintf("%d merge request(s) found", m.mrList.Count())
+			if m.mrsErrored > 0 {
+				summary += fmt.Sprintf(" (%d project(s) failed to load)", m.mrsErrored)
+			}
+			m.setStatus(summary)
+		}
+		return m, nil
+
+	case components.MRsChosenMsg:
+		return m.openPipelinesForMRs(msg.MRs)
 
 	case refSearchSubmitMsg:
 		return m.searchPipelinesByRef(msg.ref)
@@ -502,6 +552,8 @@ func (m Model) View() string {
 		body = modalStyle.Render(m.groupPicker.View())
 	case m.refSearch.Active:
 		body = modalStyle.Render(m.refSearch.View())
+	case m.mrList.Active:
+		body = modalStyle.Render(m.mrList.View())
 	case m.pane == panePipelines:
 		body = m.pipelineList.View()
 	default:

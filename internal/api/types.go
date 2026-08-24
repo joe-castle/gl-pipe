@@ -89,6 +89,21 @@ type Variable struct {
 	Protected bool
 }
 
+// MergeRequest is a GitLab merge request, used to jump straight to its
+// pipelines without needing to already know which project it's in.
+type MergeRequest struct {
+	ID           int
+	IID          int
+	ProjectID    int
+	Title        string
+	SourceBranch string
+	TargetBranch string
+	Author       string
+	Draft        bool
+	WebURL       string
+	UpdatedAt    time.Time
+}
+
 // BlobHit is one match from a GitLab blob (code) search.
 type BlobHit struct {
 	ProjectID   int

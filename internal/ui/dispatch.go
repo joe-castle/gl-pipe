@@ -44,6 +44,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.refSearch, cmd = m.refSearch.Update(msg)
 		return m, cmd
+	case m.mrList.Active:
+		var cmd tea.Cmd
+		m.mrList, cmd = m.mrList.Update(msg)
+		return m, cmd
 	case m.logViewer.Active:
 		var cmd tea.Cmd
 		m.logViewer, cmd = m.logViewer.Update(msg)
@@ -81,6 +85,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if !textFocused {
 				return m.openPipelinesForSelected()
+			}
+		case "M":
+			if !textFocused {
+				return m.openMRsForSelected()
 			}
 		}
 		var cmd tea.Cmd
@@ -149,6 +157,13 @@ func (m Model) handleLeaderAction(key string) (tea.Model, tea.Cmd) {
 		m.loading = true
 		return m, loadGroupsCmd(m.ctx, m.client, id)
 
+	case "m":
+		id := m.newReqID()
+		m.genMRs = id
+		m.loading = true
+		m.mrList.SetProjectNames(m.projectNames)
+		return m, loadMyMRsCmd(m.ctx, m.client, id)
+
 	case "v":
 		names := make([]string, 0, len(m.cfg.Presets))
 		for name := range m.cfg.Presets {
@@ -210,29 +225,27 @@ func (m *Model) focusedWebURL() string {
 	return ""
 }
 
-// startPipelinesBatch is the shared plumbing behind both "view staged
-// projects' pipelines" and "search by ref across every known project": it
-// clears the matrix, starts a new generation, tracks how many responses are
-// outstanding (so the status line can report one clean summary on
-// completion instead of flickering per-response — most projects miss a ref
-// search, and showing each miss as its own status would bury the result),
-// and fires one Cmd per project.
-func (m Model) startPipelinesBatch(projects []api.Project, fetch func(projectID int, id reqID) tea.Cmd) (tea.Model, tea.Cmd) {
-	if len(projects) == 0 {
+// startPipelinesBatch is the shared plumbing behind every way of loading
+// pipelines into the matrix — staged projects, a ref search across every
+// known project, or an MR selection's pipelines: it clears the matrix,
+// starts a new generation, tracks how many responses are outstanding (so
+// the status line can report one clean summary on completion instead of
+// flickering per-response — most projects miss a ref search, and showing
+// each miss as its own status would bury the result), and fires n Cmds
+// built by the caller (the reqID is only known once newReqID() runs here,
+// so callers get it via the build callback rather than baking it in
+// themselves).
+func (m Model) startPipelinesBatch(n int, build func(id reqID) []tea.Cmd) (tea.Model, tea.Cmd) {
+	if n == 0 {
 		return m, nil
 	}
 	id := m.newReqID()
 	m.genPipelines = id
 	m.loading = true
-	m.pipelinesPending = len(projects)
+	m.pipelinesPending = n
 	m.pipelinesErrored = 0
 	m.pipelineList.SetPipelines(nil)
-
-	cmds := make([]tea.Cmd, 0, len(projects))
-	for _, proj := range projects {
-		cmds = append(cmds, fetch(proj.ID, id))
-	}
-	return m, tea.Batch(cmds...)
+	return m, tea.Batch(build(id)...)
 }
 
 // openPipelinesForSelected shows pipelines for every staged project
@@ -241,8 +254,12 @@ func (m Model) startPipelinesBatch(projects []api.Project, fetch func(projectID 
 // the trigger modal.
 func (m Model) openPipelinesForSelected() (tea.Model, tea.Cmd) {
 	projects := m.projectList.SelectedProjects()
-	return m.startPipelinesBatch(projects, func(projectID int, id reqID) tea.Cmd {
-		return pipelinesForProjectCmd(m.ctx, m.client, projectID, id)
+	return m.startPipelinesBatch(len(projects), func(id reqID) []tea.Cmd {
+		cmds := make([]tea.Cmd, len(projects))
+		for i, proj := range projects {
+			cmds[i] = pipelinesForProjectCmd(m.ctx, m.client, proj.ID, id)
+		}
+		return cmds
 	})
 }
 
@@ -255,10 +272,51 @@ func (m Model) searchPipelinesByRef(ref string) (tea.Model, tea.Cmd) {
 		m.setStatus("no synced projects to search — sync first (<space> r or <space> g)")
 		return m, nil
 	}
-	m.setStatus(fmt.Sprintf("searching %d project(s) for ref %q...", len(m.cacheIdx.Projects), ref))
-	return m.startPipelinesBatch(m.cacheIdx.Projects, func(projectID int, id reqID) tea.Cmd {
-		return pipelinesByRefCmd(m.ctx, m.client, projectID, ref, id)
+	projects := m.cacheIdx.Projects
+	m.setStatus(fmt.Sprintf("searching %d project(s) for ref %q...", len(projects), ref))
+	return m.startPipelinesBatch(len(projects), func(id reqID) []tea.Cmd {
+		cmds := make([]tea.Cmd, len(projects))
+		for i, proj := range projects {
+			cmds[i] = pipelinesByRefCmd(m.ctx, m.client, proj.ID, ref, id)
+		}
+		return cmds
 	})
+}
+
+// openPipelinesForMRs jumps straight from an MR selection to its
+// pipelines, reusing the exact same matrix (and therefore sort/filter/
+// bulk-retry) as every other way of getting pipelines into it.
+func (m Model) openPipelinesForMRs(mrs []api.MergeRequest) (tea.Model, tea.Cmd) {
+	return m.startPipelinesBatch(len(mrs), func(id reqID) []tea.Cmd {
+		cmds := make([]tea.Cmd, len(mrs))
+		for i, mr := range mrs {
+			cmds[i] = mrPipelinesCmd(m.ctx, m.client, mr.ProjectID, mr.IID, id)
+		}
+		return cmds
+	})
+}
+
+// openMRsForSelected fetches MRs for the staged (or highlighted-fallback)
+// project(s) — M on the explorer — clearing and batching the same way
+// openPipelinesForSelected does for pipelines.
+func (m Model) openMRsForSelected() (tea.Model, tea.Cmd) {
+	projects := m.projectList.SelectedProjects()
+	if len(projects) == 0 {
+		return m, nil
+	}
+	id := m.newReqID()
+	m.genMRs = id
+	m.loading = true
+	m.mrsPending = len(projects)
+	m.mrsErrored = 0
+	m.mrList.SetProjectNames(m.projectNames)
+	m.mrList.SetMRs(nil)
+
+	cmds := make([]tea.Cmd, 0, len(projects))
+	for _, proj := range projects {
+		cmds = append(cmds, loadProjectMRsCmd(m.ctx, m.client, proj.ID, id))
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // openJobsForPipelines shows job matrices for one or more pipelines

@@ -79,6 +79,27 @@ func loadGroupsCmd(ctx context.Context, client *api.Client, id reqID) tea.Cmd {
 	}
 }
 
+func loadMyMRsCmd(ctx context.Context, client *api.Client, id reqID) tea.Cmd {
+	return func() tea.Msg {
+		mrs, err := client.ListMyMergeRequests(ctx)
+		return myMRsLoadedMsg{reqID: id, mrs: mrs, err: err}
+	}
+}
+
+func loadProjectMRsCmd(ctx context.Context, client *api.Client, projectID int, id reqID) tea.Cmd {
+	return func() tea.Msg {
+		mrs, err := client.ListProjectMergeRequests(ctx, projectID)
+		return projectMRsLoadedMsg{reqID: id, projectID: projectID, mrs: mrs, err: err}
+	}
+}
+
+func mrPipelinesCmd(ctx context.Context, client *api.Client, projectID, mrIID int, id reqID) tea.Cmd {
+	return func() tea.Msg {
+		pipelines, err := client.ListMergeRequestPipelines(ctx, projectID, mrIID)
+		return pipelinesLoadedMsg{reqID: id, projectID: projectID, pipelines: pipelines, err: err}
+	}
+}
+
 func loadRefsCmd(ctx context.Context, client *api.Client, projectID int, id reqID) tea.Cmd {
 	return func() tea.Msg {
 		tags, err := client.ListTags(ctx, projectID)

@@ -97,6 +97,7 @@ The project explorer only syncs projects from an instance's `default_groups` —
 | `p` | Open the pipeline trigger modal for the staged (or highlighted) repo(s) |
 | `f` | Open the blob (code) search filter, scoped to a group |
 | `b` | Search for pipelines by an exact ref across every synced project — no need to know which repo it's in |
+| `m` | Your merge requests (assigned + authored, open) across every synced project |
 | `v` | Pick a variable preset to prefill the next trigger |
 | `g` | Discover groups you belong to and add some to `default_groups` |
 | `s` | Open settings — switch instance profile, view TTL/presets |
@@ -112,6 +113,7 @@ The project explorer only syncs projects from an instance's `default_groups` —
 | `x` | Toggle multi-select on the highlighted project |
 | `T` | Lock the highlighted project's ref to its latest SemVer tag |
 | `Enter` | View pipelines for the staged (`x`) projects together, or just the highlighted one if none are staged |
+| `M` | Open merge requests for the staged (or highlighted) project(s) |
 
 ### Group discovery modal
 
@@ -121,6 +123,17 @@ The project explorer only syncs projects from an instance's `default_groups` —
 | `x` / `Enter` | Toggle the highlighted group |
 | `Enter` on `[ Save ]` | Merge selected groups into `default_groups` and resync |
 | `Esc` | Cancel without saving |
+
+### Merge request modal
+
+| Key | Action |
+|---|---|
+| `/` | Fuzzy-filter by title, branch, project, or author |
+| `x` | Stage/unstage the highlighted MR |
+| `Enter` | Jump to pipelines for the staged (or highlighted) MR(s) — feeds straight into the pipeline matrix below, so sort/filter/bulk-retry all apply |
+| `Esc` | Cancel |
+
+Opened via `<Space> m` ("my MRs" — assigned + authored, open, across every synced project) or `M` on the explorer (a specific project's open MRs). Either way, the point is retrying a pile of interrelated failed pipelines without leaving the keyboard: pull up the MRs, stage the ones you care about, `Enter` to see their pipelines together, `R` to bulk-retry the failed ones.
 
 ### Pipeline matrix
 
