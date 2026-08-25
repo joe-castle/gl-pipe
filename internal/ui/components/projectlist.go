@@ -69,7 +69,7 @@ func NewProjectList() ProjectList {
 	)
 
 	filter := textinput.New()
-	filter.Placeholder = "fuzzy filter..."
+	filter.Placeholder = "fuzzy filter... (try group/  or  !exclude)"
 	filter.Prompt = "/ "
 
 	group := textinput.New()

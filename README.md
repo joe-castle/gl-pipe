@@ -109,7 +109,7 @@ The project explorer only syncs projects from an instance's `default_groups` —
 
 | Key | Action |
 |---|---|
-| `/` | Fuzzy-filter projects by path |
+| `/` | Filter projects by path (fuzzy, with the extended syntax below) |
 | `x` | Toggle multi-select on the highlighted project |
 | `a` | Stage/unstage all — respects the current `/` filter |
 | `T` | Lock the staged (or highlighted) project(s) to their latest SemVer tag — press again to unlock any of them that are currently locked |
@@ -118,6 +118,18 @@ The project explorer only syncs projects from an instance's `default_groups` —
 | `M` | Open merge requests for the staged (or highlighted) project(s) |
 
 To lock every project matching a filter to its latest tag: `/` to filter, `a` to stage all of them, `T` (SemVer) or `t` (most recently created) to lock. Pressing the same key again unlocks — it targets whatever in the batch is currently locked, so one project with no qualifying tag (left on its default ref) won't block unlocking the rest.
+
+#### Filter syntax
+
+The `/` box is space-separated tokens, all of which must hold (AND). Most tokens are plain fuzzy terms (letters just need to appear in order somewhere in the path — same as before), but two prefixes carry special meaning, borrowed from fzf's extended search:
+
+| Token | Meaning |
+|---|---|
+| `word` | Fuzzy subsequence match (default) — ranked, best match first |
+| `group/` | Direct children of `group` only — excludes anything nested under a subgroup. This is an exact, non-fuzzy prefix check, since "not a subgroup" has no fuzzy equivalent |
+| `!word` | Exclude any project whose path contains `word` |
+
+They combine: `backend/ !legacy` finds direct children of `backend`, minus anything with "legacy" in the name — the pattern for "all the services in a group, not its subgroups, minus a few I don't want" without hand-picking each one. A query using only `group/`/`!word` tokens (no plain term) lists matches in cache order, since there's nothing to rank by.
 
 ### Blob (code) search modal
 

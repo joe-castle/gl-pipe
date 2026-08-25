@@ -111,3 +111,80 @@ func TestFilter_NoMatchesReturnsEmpty(t *testing.T) {
 		t.Errorf("Filter returned %d results, want 0", len(got))
 	}
 }
+
+// TestFilter_TrailingSlashMatchesDirectChildrenOnly covers the depth
+// anchor: "backend/" should mean "direct children of backend", excluding
+// anything nested under a subgroup.
+func TestFilter_TrailingSlashMatchesDirectChildrenOnly(t *testing.T) {
+	idx := &Index{Projects: []api.Project{
+		{PathWithNamespace: "backend/svc-a"},
+		{PathWithNamespace: "backend/subteam/svc-b"},
+		{PathWithNamespace: "frontend/svc-c"},
+	}}
+	got := idx.Filter("backend/")
+	if len(got) != 1 || got[0].PathWithNamespace != "backend/svc-a" {
+		t.Fatalf("Filter(\"backend/\") = %+v, want only backend/svc-a", got)
+	}
+}
+
+func TestFilter_TrailingSlashAnchorIsCaseInsensitive(t *testing.T) {
+	idx := &Index{Projects: []api.Project{
+		{PathWithNamespace: "Backend/svc-a"},
+	}}
+	got := idx.Filter("backend/")
+	if len(got) != 1 {
+		t.Fatalf("Filter(\"backend/\") = %+v, want 1 case-insensitive match", got)
+	}
+}
+
+// TestFilter_ExclamationExcludesMatches covers the exclude token: "!term"
+// drops any project whose path contains term.
+func TestFilter_ExclamationExcludesMatches(t *testing.T) {
+	idx := &Index{Projects: []api.Project{
+		{PathWithNamespace: "backend/svc-a"},
+		{PathWithNamespace: "backend/legacy-svc"},
+	}}
+	got := idx.Filter("svc !legacy")
+	if len(got) != 1 || got[0].PathWithNamespace != "backend/svc-a" {
+		t.Fatalf("Filter(\"svc !legacy\") = %+v, want only backend/svc-a", got)
+	}
+}
+
+// TestFilter_MultipleFuzzyTermsAreANDed: space-separated plain terms must
+// all match (in some order/position), not just the last one.
+func TestFilter_MultipleFuzzyTermsAreANDed(t *testing.T) {
+	idx := &Index{Projects: []api.Project{
+		{PathWithNamespace: "backend/core-services"},
+		{PathWithNamespace: "backend/core-utils"},
+		{PathWithNamespace: "frontend/core-services"},
+	}}
+	got := idx.Filter("backend services")
+	if len(got) != 1 || got[0].PathWithNamespace != "backend/core-services" {
+		t.Fatalf("Filter(\"backend services\") = %+v, want only backend/core-services", got)
+	}
+}
+
+// TestFilter_CombinesAnchorAndExclude: the depth anchor and the exclude
+// token compose in a single query.
+func TestFilter_CombinesAnchorAndExclude(t *testing.T) {
+	idx := &Index{Projects: []api.Project{
+		{PathWithNamespace: "backend/svc-a"},
+		{PathWithNamespace: "backend/legacy-svc"},
+		{PathWithNamespace: "backend/subteam/svc-b"},
+	}}
+	got := idx.Filter("backend/ !legacy")
+	if len(got) != 1 || got[0].PathWithNamespace != "backend/svc-a" {
+		t.Fatalf("Filter(\"backend/ !legacy\") = %+v, want only backend/svc-a", got)
+	}
+}
+
+func TestFilter_AnchorOrExcludeAloneWithNoFuzzyTermPreservesOrder(t *testing.T) {
+	idx := &Index{Projects: []api.Project{
+		{PathWithNamespace: "backend/svc-b"},
+		{PathWithNamespace: "backend/svc-a"},
+	}}
+	got := idx.Filter("backend/")
+	if len(got) != 2 || got[0].PathWithNamespace != "backend/svc-b" || got[1].PathWithNamespace != "backend/svc-a" {
+		t.Fatalf("expected original cache order preserved with no fuzzy term, got %+v", got)
+	}
+}
