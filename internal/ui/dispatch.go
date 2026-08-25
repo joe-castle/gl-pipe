@@ -248,6 +248,7 @@ func (m Model) startPipelinesBatch(n int, build func(id reqID) []tea.Cmd) (tea.M
 	m.loading = true
 	m.pipelinesPending = n
 	m.pipelinesErrored = 0
+	m.pipelinesTotal = n
 	m.pipelineList.SetPipelines(nil)
 	return m, tea.Batch(build(id)...)
 }
@@ -313,6 +314,7 @@ func (m Model) openMRsForSelected() (tea.Model, tea.Cmd) {
 	m.loading = true
 	m.mrsPending = len(projects)
 	m.mrsErrored = 0
+	m.mrsTotal = len(projects)
 	m.mrList.SetProjectNames(m.projectNames)
 	m.mrList.SetMRs(nil)
 
@@ -366,6 +368,7 @@ func (m Model) toggleLockRef(strategy refLockStrategy) (tea.Model, tea.Cmd) {
 	m.refsErrored = 0
 	m.refsLocked = 0
 	m.refsSkipped = 0
+	m.refsTotal = len(projects)
 
 	cmds := make([]tea.Cmd, 0, len(projects))
 	for _, proj := range projects {
@@ -405,6 +408,9 @@ func (m Model) openJobsForPipelines(pipelines []api.Pipeline) (tea.Model, tea.Cm
 	id := m.newReqID()
 	m.genJobs = id
 	m.loading = true
+	m.jobsPending = len(pipelines)
+	m.jobsErrored = 0
+	m.jobsTotal = len(pipelines)
 	m.pipelineList.ClearJobs()
 
 	cmds := make([]tea.Cmd, 0, len(pipelines))

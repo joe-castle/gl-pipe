@@ -633,6 +633,59 @@ func TestUpdate_PipelinesLoadedSummarizesOnceBatchCompletes(t *testing.T) {
 	}
 }
 
+// TestUpdate_JobsLoadedTracksPendingAndClearsLoadingOnlyOnceBatchCompletes
+// covers the same completion-summary discipline as pipelines/MRs/refs,
+// which jobsLoadedMsg previously lacked entirely: it used to clear
+// m.loading on the very first response, so a multi-pipeline job batch's
+// loading indicator (and now progress bar) would report "done" long
+// before every pipeline's jobs had actually arrived.
+func TestUpdate_JobsLoadedTracksPendingAndClearsLoadingOnlyOnceBatchCompletes(t *testing.T) {
+	m := newTestModel(t)
+	m.pipelineList.SetPipelines([]api.Pipeline{{ID: 1, ProjectID: 10}, {ID: 2, ProjectID: 11}})
+	m.genJobs = 9
+	m.jobsPending = 2
+	m.jobsTotal = 2
+	m.loading = true
+
+	updated, _ := m.Update(jobsLoadedMsg{reqID: 9, pipelineID: 1, jobs: []api.Job{{ID: 100}}})
+	mm := updated.(Model)
+	if !mm.loading {
+		t.Fatal("expected loading to stay true with a response still outstanding")
+	}
+	if mm.jobsPending != 1 {
+		t.Fatalf("jobsPending = %d, want 1", mm.jobsPending)
+	}
+
+	updated, _ = mm.Update(jobsLoadedMsg{reqID: 9, pipelineID: 2, jobs: []api.Job{{ID: 200}}})
+	mm = updated.(Model)
+	if mm.loading {
+		t.Fatal("expected loading false once both responses are in")
+	}
+}
+
+func TestLoadingProgress_ReportsWhicheverBatchIsActive(t *testing.T) {
+	m := newTestModel(t)
+	if _, _, ok := m.loadingProgress(); ok {
+		t.Fatal("expected ok=false with nothing in flight")
+	}
+
+	m.pipelinesPending, m.pipelinesTotal = 2, 5
+	done, total, ok := m.loadingProgress()
+	if !ok || done != 3 || total != 5 {
+		t.Fatalf("got done=%d total=%d ok=%v, want 3,5,true", done, total, ok)
+	}
+
+	// Once that batch finishes (Pending back to 0), a different batch's
+	// progress should be reported instead — proves this doesn't get stuck
+	// reporting an old, completed batch's now-stale Total.
+	m.pipelinesPending = 0
+	m.jobsPending, m.jobsTotal = 1, 4
+	done, total, ok = m.loadingProgress()
+	if !ok || done != 3 || total != 4 {
+		t.Fatalf("got done=%d total=%d ok=%v, want 3,4,true", done, total, ok)
+	}
+}
+
 // TestUpdate_DropsStaleJobsLoadedMsg mirrors the above for the jobs pane.
 func TestUpdate_DropsStaleJobsLoadedMsg(t *testing.T) {
 	m := newTestModel(t)
@@ -968,6 +1021,33 @@ func TestBreadcrumb_ReflectsCurrentView(t *testing.T) {
 	m.mrList.Active = true
 	if got := m.breadcrumb(); got != "MERGE REQUESTS" {
 		t.Errorf("breadcrumb() = %q, want MERGE REQUESTS", got)
+	}
+}
+
+// TestView_ShowsProgressBarDuringABatchLoad covers the user-requested
+// visual: the status line during a multi-item batch fetch (pipelines,
+// jobs, MRs, or a ref-lock batch) should show a real progress bar with a
+// completed/total count, not just a static "loading...".
+func TestView_ShowsProgressBarDuringABatchLoad(t *testing.T) {
+	m := newTestModel(t)
+	m.loading = true
+	m.pipelinesPending, m.pipelinesTotal = 20, 33
+
+	view := m.View()
+	if !strings.Contains(view, "13/33") {
+		t.Fatalf("expected the completed/total count (13/33) in the view, got:\n%s", view)
+	}
+}
+
+// TestView_PlainLoadingTextForASingleItemFetch ensures a non-batch fetch
+// (nothing in Pending/Total) doesn't render a degenerate 0/0 or 1/1 bar.
+func TestView_PlainLoadingTextForASingleItemFetch(t *testing.T) {
+	m := newTestModel(t)
+	m.loading = true
+
+	view := m.View()
+	if !strings.Contains(view, "loading...") {
+		t.Fatalf("expected plain 'loading...' text, got:\n%s", view)
 	}
 }
 

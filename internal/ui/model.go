@@ -11,6 +11,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -99,15 +100,26 @@ type Model struct {
 	// status line reports one clean summary on completion instead of
 	// flickering per-response — with dozens of projects most responses are
 	// empty misses, and showing each as its own status would bury (or
-	// overwrite) the real result.
+	// overwrite) the real result. pipelinesTotal is the batch's original
+	// size — Pending alone only tells you what's left, not how far along
+	// the batch is — used to drive the loading progress bar (loadingProgress).
 	pipelinesPending int
 	pipelinesErrored int
+	pipelinesTotal   int
+
+	// jobsPending/jobsErrored/jobsTotal is the same tracking for a job-
+	// matrix batch (Enter on one or more staged pipelines, or the "view
+	// downstream pipeline" jump).
+	jobsPending int
+	jobsErrored int
+	jobsTotal   int
 
 	// mrsPending/mrsErrored is the same tracking for a project-scoped MR
 	// fetch batch (M on the explorer, across staged projects). "My MRs"
 	// (<Space> m) is a single global request and doesn't need this.
 	mrsPending int
 	mrsErrored int
+	mrsTotal   int
 
 	// refsPending/refsErrored/refsLocked/refsSkipped track a "lock to
 	// latest tag" batch (T/t on the explorer, across staged/highlighted
@@ -119,7 +131,15 @@ type Model struct {
 	refsErrored int
 	refsLocked  int
 	refsSkipped int
+	refsTotal   int
 	refLockMode refLockStrategy // which strategy the in-flight refsPending batch is using
+
+	// progressBar renders the loading status line's progress bar
+	// (loadingProgress picks which *Pending/*Total pair, if any, is
+	// currently in flight) — a static ViewAs(fraction) render, not the
+	// animated SetPercent path, so it needs no Update()/tea.Cmd wiring of
+	// its own.
+	progressBar progress.Model
 
 	// refPickerFor disambiguates who an in-flight genRefPicker fetch is
 	// for: the trigger modal's "pick the ref to dispatch with" (ctrl+r
@@ -173,6 +193,7 @@ func New(ctx context.Context, cancel context.CancelFunc, cfg *config.Config, con
 		refSearch:    newRefSearch(),
 		mrList:       components.NewMRList(),
 		projectNames: map[int]string{},
+		progressBar:  progress.New(progress.WithSolidFill("51"), progress.WithoutPercentage(), progress.WithWidth(24)),
 	}
 	if cfg == nil {
 		m.view = viewWizard
@@ -250,6 +271,29 @@ func (m *Model) setErr(err error) {
 func (m *Model) setStatus(s string) {
 	m.statusMsg = s
 	m.statusErr = false
+}
+
+// loadingProgress reports how far along the currently in-flight batch (if
+// any) is, for the status line's progress bar. At most one of the four
+// batch kinds is ever actually in flight at a time — the UI is modal, so
+// concurrent batches can't be triggered — so checking Pending > 0 in turn
+// is enough to find the active one without a separate "which kind"
+// field. ok is false when nothing batch-shaped is loading (a single-item
+// fetch like a project sync or a trigger dispatch), in which case the
+// status line falls back to a plain "loading...".
+func (m Model) loadingProgress() (done, total int, ok bool) {
+	switch {
+	case m.pipelinesPending > 0 && m.pipelinesTotal > 0:
+		return m.pipelinesTotal - m.pipelinesPending, m.pipelinesTotal, true
+	case m.jobsPending > 0 && m.jobsTotal > 0:
+		return m.jobsTotal - m.jobsPending, m.jobsTotal, true
+	case m.mrsPending > 0 && m.mrsTotal > 0:
+		return m.mrsTotal - m.mrsPending, m.mrsTotal, true
+	case m.refsPending > 0 && m.refsTotal > 0:
+		return m.refsTotal - m.refsPending, m.refsTotal, true
+	default:
+		return 0, 0, false
+	}
 }
 
 func (m *Model) newReqID() reqID {
@@ -598,13 +642,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.reqID != m.genJobs {
 			return m, nil
 		}
-		m.loading = false
 		if msg.err != nil {
-			m.setErr(msg.err)
-			return m, nil
-		}
-		if pl, ok := m.pipelineList.FindPipeline(msg.pipelineID); ok {
+			m.jobsErrored++
+		} else if pl, ok := m.pipelineList.FindPipeline(msg.pipelineID); ok {
 			m.pipelineList.AddJobs(pl, msg.jobs)
+		}
+		if m.jobsPending > 0 {
+			m.jobsPending--
+		}
+		if m.jobsPending == 0 {
+			m.loading = false
+			if m.jobsErrored > 0 {
+				m.setStatus(fmt.Sprintf("jobs loaded (%d pipeline(s) failed to load)", m.jobsErrored))
+			}
 		}
 		return m, nil
 
@@ -755,7 +805,12 @@ func (m Model) View() string {
 		status = statusBarStyle.Render(errorStyle.Render(m.statusMsg))
 	}
 	if m.loading {
-		status = statusBarStyle.Render("loading...")
+		if done, total, ok := m.loadingProgress(); ok && total > 1 {
+			bar := m.progressBar.ViewAs(float64(done) / float64(total))
+			status = statusBarStyle.Render(fmt.Sprintf("loading %d/%d ", done, total) + bar)
+		} else {
+			status = statusBarStyle.Render("loading...")
+		}
 	}
 
 	out := lipgloss.JoinVertical(lipgloss.Left, header, crumb, body, status)
