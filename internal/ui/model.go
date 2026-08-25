@@ -90,6 +90,7 @@ type Model struct {
 	genLogs      reqID
 	genGroups    reqID
 	genMRs       reqID
+	genBlob      reqID
 
 	logCancel context.CancelFunc
 	logJobURL string
@@ -290,10 +291,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setStatus(fmt.Sprintf("synced %d projects from %d group(s)", len(msg.projects), len(inst.DefaultGroups)))
 		return m, saveCacheCmd(m.cacheIdx, m.instanceCachePath())
 
+	case components.BlobSearchRequestMsg:
+		id := m.newReqID()
+		m.genBlob = id
+		m.loading = true
+		m.setStatus(fmt.Sprintf("searching %s for %q...", msg.Group, msg.Query))
+		return m, blobSearchCmd(m.ctx, m.client, msg.Group, msg.Query, id)
+
 	case blobSearchResultsMsg:
-		if msg.reqID != m.genProjects {
+		if msg.reqID != m.genBlob {
 			return m, nil
 		}
+		m.loading = false
 		if msg.err != nil {
 			m.setErr(msg.err)
 			return m, nil
@@ -303,7 +312,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			hits[i].ProjectPath = m.projectNames[hits[i].ProjectID]
 		}
 		m.projectList.BlobHits = hits
-		m.setStatus(fmt.Sprintf("%d blob search hits", len(hits)))
+		m.setStatus(fmt.Sprintf("%d blob search hit(s)", len(hits)))
 		return m, nil
 
 	case refsLoadedMsg:

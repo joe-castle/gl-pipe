@@ -95,7 +95,7 @@ The project explorer only syncs projects from an instance's `default_groups` —
 | Key | Action |
 |---|---|
 | `p` | Open the pipeline trigger modal for the staged (or highlighted) repo(s) |
-| `f` | Open the blob (code) search filter, scoped to a group |
+| `f` | Open the blob (code) search filter (group + query in separate fields — see below) |
 | `b` | Search for pipelines by an exact ref across every synced project — no need to know which repo it's in |
 | `m` | Your merge requests (assigned + authored, open) across every synced project |
 | `v` | Pick a variable preset to prefill the next trigger |
@@ -114,6 +114,24 @@ The project explorer only syncs projects from an instance's `default_groups` —
 | `T` | Lock the highlighted project's ref to its latest SemVer tag |
 | `Enter` | View pipelines for the staged (`x`) projects together, or just the highlighted one if none are staged |
 | `M` | Open merge requests for the staged (or highlighted) project(s) |
+
+### Blob (code) search modal
+
+| Key | Action |
+|---|---|
+| `Tab` | Switch between the group and query fields |
+| `Enter` | Run the search |
+| `Esc` | Cancel |
+
+Opened via `<Space> f`. Two separate fields — group and query — not one combined string, so the query can freely use GitLab's own search qualifiers without ambiguity. The group field starts prefilled from the active instance's first `default_groups` entry; clear or edit it to search elsewhere.
+
+The query is passed to GitLab's blob search unmodified, so its qualifiers work exactly as GitLab defines them:
+
+- `path:src/main` — repo-location match (substring, not a glob: `path:src/main` matches anywhere `src/main` appears in the path, but `src/main/**/*.java` is not valid syntax)
+- `filename:*.java` — filename match, `*` wildcard supported
+- `extension:java` — exact extension match, no leading dot
+
+These qualifiers are part of GitLab's **Advanced Search** (Elasticsearch), which requires a Premium/Ultimate self-hosted instance with Elasticsearch enabled, or GitLab.com. On a basic (non-Elasticsearch) instance they won't work as filters — GitLab will likely treat them as literal search text and return nothing. There's no way to detect this from the API response alone; if a qualified search comes back empty, try the same query without the qualifiers to check whether it's an Advanced Search gap rather than a "no matches" result.
 
 ### Group discovery modal
 

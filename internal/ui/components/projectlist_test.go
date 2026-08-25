@@ -137,10 +137,11 @@ func TestProjectList_HasTextFocus(t *testing.T) {
 	}
 }
 
-func TestProjectList_BlobSearchParsesGroupPrefix(t *testing.T) {
+func TestProjectList_BlobSearchUsesSeparateGroupAndQueryFields(t *testing.T) {
 	p := NewProjectList()
 	p.OpenBlobSearch()
-	p.blobInput.SetValue("backend: @SpringBootApplication")
+	p.groupInput.SetValue("backend")
+	p.queryInput.SetValue("@SpringBootApplication")
 
 	_, cmd := p.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
@@ -155,11 +156,50 @@ func TestProjectList_BlobSearchParsesGroupPrefix(t *testing.T) {
 	}
 }
 
-func TestProjectList_BlobSearchFallsBackToDefaultGroup(t *testing.T) {
+// TestProjectList_BlobSearchQueryWithPathQualifierIsNotMisreadAsGroup is a
+// regression test for the original single-field design: splitting on the
+// first ':' broke as soon as the query itself contained GitLab's own
+// path:/filename:/extension: search qualifiers, since those also use ':'.
+// Two separate fields sidestep the ambiguity entirely.
+func TestProjectList_BlobSearchQueryWithPathQualifierIsNotMisreadAsGroup(t *testing.T) {
+	p := NewProjectList()
+	p.OpenBlobSearch()
+	p.groupInput.SetValue("backend")
+	p.queryInput.SetValue("path:src/main extension:java @SpringBootApplication")
+
+	_, cmd := p.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	msg := cmd().(BlobSearchRequestMsg)
+	if msg.Group != "backend" {
+		t.Fatalf("expected Group=backend (not misread from the query's ':'), got %q", msg.Group)
+	}
+	if msg.Query != "path:src/main extension:java @SpringBootApplication" {
+		t.Fatalf("expected the query passed through unmodified, got %q", msg.Query)
+	}
+}
+
+func TestProjectList_BlobSearchTabSwitchesFieldFocus(t *testing.T) {
+	p := NewProjectList()
+	p.DefaultGroup = "backend" // starts focus on the query field
+	p.OpenBlobSearch()
+	if p.blobOnGroup {
+		t.Fatal("expected focus to start on the query field when DefaultGroup is set")
+	}
+
+	updated, _ := p.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if !updated.blobOnGroup {
+		t.Fatal("expected tab to switch focus to the group field")
+	}
+	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if updated.blobOnGroup {
+		t.Fatal("expected a second tab to switch focus back to the query field")
+	}
+}
+
+func TestProjectList_BlobSearchOpenPrefillsDefaultGroup(t *testing.T) {
 	p := NewProjectList()
 	p.DefaultGroup = "core-services"
 	p.OpenBlobSearch()
-	p.blobInput.SetValue("TODO")
+	p.queryInput.SetValue("TODO")
 
 	_, cmd := p.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	msg := cmd().(BlobSearchRequestMsg)

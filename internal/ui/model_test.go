@@ -100,6 +100,46 @@ func TestHandleLeaderAction_GTriggersGroupsLoad(t *testing.T) {
 	}
 }
 
+// TestUpdate_BlobSearchRequestActuallyFiresTheSearch is a regression test:
+// components.BlobSearchRequestMsg was emitted by ProjectList but the root
+// model had no case for it at all, so the message was silently dropped —
+// pressing enter on the blob search form did nothing, with no error and no
+// feedback, exactly as reported.
+func TestUpdate_BlobSearchRequestActuallyFiresTheSearch(t *testing.T) {
+	m := newTestModel(t)
+	updated, cmd := m.Update(components.BlobSearchRequestMsg{Group: "backend", Query: "@SpringBootApplication"})
+	mm := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a Cmd that actually runs the blob search")
+	}
+	if mm.genBlob == 0 {
+		t.Fatal("expected genBlob to be set")
+	}
+	if !mm.loading {
+		t.Fatal("expected loading=true while the search runs")
+	}
+}
+
+// TestUpdate_BlobSearchResultsDropsStaleResponse guards genBlob's own
+// generation check (it used to piggyback on genProjects, which a
+// concurrent project sync could bump and silently swallow blob results).
+func TestUpdate_BlobSearchResultsDropsStaleResponse(t *testing.T) {
+	m := newTestModel(t)
+	m.genBlob = 5
+
+	updated, _ := m.Update(blobSearchResultsMsg{reqID: 3, hits: []api.BlobHit{{Path: "a.go"}}})
+	mm := updated.(Model)
+	if len(mm.projectList.BlobHits) != 0 {
+		t.Fatalf("expected a stale-generation response to be dropped, got %+v", mm.projectList.BlobHits)
+	}
+
+	updated, _ = mm.Update(blobSearchResultsMsg{reqID: 5, hits: []api.BlobHit{{Path: "b.go"}}})
+	mm = updated.(Model)
+	if len(mm.projectList.BlobHits) != 1 || mm.projectList.BlobHits[0].Path != "b.go" {
+		t.Fatalf("expected the matching-generation response to apply, got %+v", mm.projectList.BlobHits)
+	}
+}
+
 func TestHandleLeaderAction_BOpensRefSearch(t *testing.T) {
 	m := newTestModel(t)
 	updated, _ := m.Update(components.LeaderActionMsg{Key: "b"})

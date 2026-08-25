@@ -13,9 +13,11 @@ import (
 	"github.com/joeca/gl-pipe/internal/cache"
 )
 
-// BlobSearchRequestMsg is emitted when the user submits a blob search query.
-// Group is derived from a "group: query" prefix, falling back to the
-// component's DefaultGroup when omitted.
+// BlobSearchRequestMsg is emitted when the user submits a blob search:
+// Group and Query come from two separate input fields (not a single
+// "group: query" string) so Query can freely contain GitLab's own search
+// qualifiers — path:, filename:, extension: — which also use ':' and would
+// otherwise be ambiguous with a group-prefix split.
 type BlobSearchRequestMsg struct {
 	Group string
 	Query string
@@ -36,7 +38,9 @@ const (
 type ProjectList struct {
 	table       table.Model
 	filterInput textinput.Model
-	blobInput   textinput.Model
+	groupInput  textinput.Model
+	queryInput  textinput.Model
+	blobOnGroup bool // true: groupInput focused; false: queryInput focused
 	mode        projectListMode
 
 	all      []api.Project
@@ -46,8 +50,7 @@ type ProjectList struct {
 	LockedRef    map[int]string
 	DefaultGroup string
 
-	BlobHits   []api.BlobHit
-	blobActive bool
+	BlobHits []api.BlobHit
 
 	width, height int
 }
@@ -69,15 +72,21 @@ func NewProjectList() ProjectList {
 	filter.Placeholder = "fuzzy filter..."
 	filter.Prompt = "/ "
 
-	blob := textinput.New()
-	blob.Placeholder = "group: search term (e.g. backend: @SpringBootApplication)"
-	blob.Prompt = "blob search: "
-	blob.Width = 60
+	group := textinput.New()
+	group.Placeholder = "backend/core-services"
+	group.Prompt = "group: "
+	group.Width = 40
+
+	query := textinput.New()
+	query.Placeholder = "@SpringBootApplication  ·  path:src/main extension:java  ·  filename:*.java"
+	query.Prompt = "query: "
+	query.Width = 70
 
 	return ProjectList{
 		table:       t,
 		filterInput: filter,
-		blobInput:   blob,
+		groupInput:  group,
+		queryInput:  query,
 		Selected:    map[int]bool{},
 		LockedRef:   map[int]string{},
 	}
@@ -158,11 +167,21 @@ func (p *ProjectList) HasTextFocus() bool {
 	return p.mode == modeFilter || p.mode == modeBlobSearch
 }
 
-// OpenBlobSearch activates the blob-search overlay.
+// OpenBlobSearch activates the blob-search overlay. Group starts prefilled
+// from DefaultGroup (edit or clear it to search elsewhere); focus starts on
+// whichever field still needs filling in.
 func (p *ProjectList) OpenBlobSearch() {
 	p.mode = modeBlobSearch
-	p.blobActive = true
-	p.blobInput.Focus()
+	p.groupInput.SetValue(p.DefaultGroup)
+	p.queryInput.SetValue("")
+	p.blobOnGroup = p.DefaultGroup == ""
+	if p.blobOnGroup {
+		p.groupInput.Focus()
+		p.queryInput.Blur()
+	} else {
+		p.queryInput.Focus()
+		p.groupInput.Blur()
+	}
 }
 
 func (p ProjectList) Update(msg tea.Msg) (ProjectList, tea.Cmd) {
@@ -181,24 +200,34 @@ func (p ProjectList) updateBlobSearch(msg tea.Msg) (ProjectList, tea.Cmd) {
 		switch km.String() {
 		case "esc":
 			p.mode = modeBrowse
-			p.blobActive = false
-			p.blobInput.Blur()
+			p.groupInput.Blur()
+			p.queryInput.Blur()
+			return p, nil
+		case "tab", "shift+tab":
+			p.blobOnGroup = !p.blobOnGroup
+			if p.blobOnGroup {
+				p.groupInput.Focus()
+				p.queryInput.Blur()
+			} else {
+				p.queryInput.Focus()
+				p.groupInput.Blur()
+			}
 			return p, nil
 		case "enter":
-			text := p.blobInput.Value()
-			group, query := p.DefaultGroup, text
-			if idx := strings.Index(text, ":"); idx >= 0 {
-				group = strings.TrimSpace(text[:idx])
-				query = strings.TrimSpace(text[idx+1:])
-			}
-			if query == "" {
+			group := strings.TrimSpace(p.groupInput.Value())
+			query := strings.TrimSpace(p.queryInput.Value())
+			if group == "" || query == "" {
 				return p, nil
 			}
 			return p, func() tea.Msg { return BlobSearchRequestMsg{Group: group, Query: query} }
 		}
 	}
 	var cmd tea.Cmd
-	p.blobInput, cmd = p.blobInput.Update(msg)
+	if p.blobOnGroup {
+		p.groupInput, cmd = p.groupInput.Update(msg)
+	} else {
+		p.queryInput, cmd = p.queryInput.Update(msg)
+	}
 	return p, cmd
 }
 
@@ -252,7 +281,7 @@ func (p ProjectList) View() string {
 	}
 	b.WriteString(p.table.View())
 	if p.mode == modeBlobSearch {
-		b.WriteString("\n\n" + p.blobInput.View())
+		b.WriteString("\n\n" + p.groupInput.View() + "\n" + p.queryInput.View() + "\n")
 		if len(p.BlobHits) > 0 {
 			b.WriteString("\n")
 			for i, h := range p.BlobHits {
@@ -263,6 +292,11 @@ func (p ProjectList) View() string {
 				b.WriteString(fmt.Sprintf("  %s:%d %s\n", h.Path, h.StartLine, h.ProjectPath))
 			}
 		}
+		b.WriteString("\n" + RenderHelp(
+			[2]string{"tab", "switch field"},
+			[2]string{"enter", "search"},
+			[2]string{"esc", "cancel"},
+		))
 	} else {
 		b.WriteString("\n" + RenderHelp(
 			[2]string{"/", "filter"},
