@@ -154,5 +154,8 @@ type logChunkMsg struct {
 	chunk api.LogChunk
 }
 
-// tickMsg drives the spinner and periodic background refresh.
+// tickMsg fires every pollInterval for the life of the program; Model.pollTick
+// uses it to keep the pipeline/job matrix live without the user needing to
+// leave and re-enter it, and always reschedules itself (self-rescheduling
+// Cmd, same shape as log streaming's invariant #3).
 type tickMsg time.Time

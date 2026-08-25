@@ -40,6 +40,11 @@ type BulkJobActionMsg struct {
 	Retry   bool
 }
 
+// RefreshRequestMsg asks the root model to immediately re-fetch whatever's
+// currently shown (pipeline or job matrix), independent of the periodic
+// poll — the manual 'r' key inside either matrix.
+type RefreshRequestMsg struct{}
+
 type pipelineListMode int
 
 const (
@@ -387,6 +392,32 @@ func (p *PipelineList) SelectedPipelines() []api.Pipeline {
 	return out
 }
 
+// AllPipelines returns every pipeline currently in the pipeline-mode
+// matrix, unfiltered — what a poll or manual refresh re-fetches.
+func (p *PipelineList) AllPipelines() []api.Pipeline { return p.pipelines }
+
+// NeedsPoll reports whether the currently active view (pipeline or job
+// matrix) has anything non-terminal left, i.e. whether periodic polling is
+// still worth doing. Once everything shown has settled (success, failed,
+// canceled, skipped, or manual), polling stops making API calls on its
+// own — a manual 'r' still works regardless.
+func (p *PipelineList) NeedsPoll() bool {
+	if p.mode == modeJobs {
+		for _, j := range p.jobs {
+			if !j.Status.Terminal() {
+				return true
+			}
+		}
+		return false
+	}
+	for _, pl := range p.pipelines {
+		if !pl.Status.Terminal() {
+			return true
+		}
+	}
+	return false
+}
+
 // FindPipeline looks up a pipeline already known to the matrix by ID.
 func (p *PipelineList) FindPipeline(id int) (api.Pipeline, bool) {
 	for _, pl := range p.pipelines {
@@ -578,6 +609,8 @@ func (p PipelineList) Update(msg tea.Msg) (PipelineList, tea.Cmd) {
 				toggleSetAll(p.Selected, ids)
 				p.syncPipeRows()
 				return p, nil
+			case "r":
+				return p, func() tea.Msg { return RefreshRequestMsg{} }
 			}
 		case modeJobs:
 			switch km.String() {
@@ -607,6 +640,8 @@ func (p PipelineList) Update(msg tea.Msg) (PipelineList, tea.Cmd) {
 				toggleSetAll(p.SelectedJ, ids)
 				p.syncJobRows()
 				return p, nil
+			case "r":
+				return p, func() tea.Msg { return RefreshRequestMsg{} }
 			}
 		}
 	}
@@ -636,6 +671,7 @@ func (p PipelineList) View() string {
 			[2]string{"enter", "view logs"},
 			[2]string{"R", "bulk retry"},
 			[2]string{"K", "bulk cancel"},
+			[2]string{"r", "refresh now"},
 			[2]string{"esc", "back"},
 		)
 		return lipgloss.NewStyle().Render(header + p.jobTable.View() + help)
@@ -661,6 +697,7 @@ func (p PipelineList) View() string {
 		[2]string{"K", "bulk cancel"},
 		[2]string{"s/S", "sort/reverse"},
 		[2]string{"/", "filter"},
+		[2]string{"r", "refresh now"},
 	)
 	return lipgloss.NewStyle().Render(header + p.pipeTable.View() + help)
 }

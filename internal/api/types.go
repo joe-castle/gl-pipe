@@ -44,6 +44,19 @@ const (
 	StatusManual   PipelineStatus = "manual"
 )
 
+// Terminal reports whether a pipeline/job status is done changing on its
+// own. Manual counts as terminal even though it's not "finished" — a
+// manual job sits still until a person presses play again, so polling it
+// would never see it move without that.
+func (s PipelineStatus) Terminal() bool {
+	switch s {
+	case StatusSuccess, StatusFailed, StatusCanceled, StatusSkipped, StatusManual:
+		return true
+	default:
+		return false
+	}
+}
+
 // Pipeline is a single CI/CD pipeline run on a project.
 type Pipeline struct {
 	ID        int

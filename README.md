@@ -173,10 +173,13 @@ Opened via `<Space> m` ("my MRs" — assigned + authored, open, across every syn
 | `s` | Cycle the sort column (Date → Project → Status → Ref → SHA → Author → Duration) |
 | `S` | Reverse sort direction without changing column |
 | `/` | Filter by ref, status, project, author, or SHA (substring, case-insensitive) |
+| `r` | Refresh now, without waiting for the next automatic poll |
 
 Sorted by Date, newest first, by default. `/` narrows what's *already loaded* into the matrix — useful for narrowing to `/failed` or a ref you know is in there. Staging (`x`) is independent of the filter: pipelines you've staged stay staged even if a filter later hides them from view.
 
 If you don't know which project a branch lives in, `/` won't find it — it only searches what's currently loaded. Use `<Space> b` instead: it queries every synced project directly by exact ref, so you don't need to stage (or even know) the right repo first.
+
+The matrix polls automatically every 10s while any pipeline shown hasn't reached a final status (success/failed/canceled/skipped/manual) — no need to bounce back to the explorer and re-trigger `Enter` to see a running pipeline update. Polling pauses on its own once everything settles, and never runs while a fetch is already in flight. Press `r` any time for an immediate refresh instead of waiting for the next tick.
 
 ### Job matrix
 
@@ -187,9 +190,10 @@ If you don't know which project a branch lives in, `/` won't find it — it only
 | `Enter` | Stream that job's live log |
 | `R` | Bulk retry the staged (or highlighted) job(s) |
 | `K` | Bulk cancel the staged (or highlighted) job(s) |
+| `r` | Refresh now, without waiting for the next automatic poll |
 | `Esc` | Back to the pipeline matrix |
 
-Showing jobs from more than one pipeline adds `Project` and `Pipeline` (`#IID`) columns so you can tell which job belongs to which run.
+Showing jobs from more than one pipeline adds `Project` and `Pipeline` (`#IID`) columns so you can tell which job belongs to which run. The same automatic polling as the pipeline matrix applies here, keyed off the jobs' own statuses rather than the parent pipeline's.
 
 ### Pipeline trigger modal
 

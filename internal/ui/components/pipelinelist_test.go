@@ -458,3 +458,74 @@ func TestPipelineList_BulkCancelInJobsUsesHighlightedJob(t *testing.T) {
 		t.Fatalf("unexpected bulk job action msg: %+v", msg)
 	}
 }
+
+func TestPipelineList_LowercaseRRequestsRefreshInPipelineMode(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{{ID: 1, ProjectID: 10}})
+
+	_, cmd := p.Update(runeKey('r'))
+	if cmd == nil {
+		t.Fatal("expected a Cmd, got nil")
+	}
+	if _, ok := cmd().(RefreshRequestMsg); !ok {
+		t.Fatalf("expected RefreshRequestMsg, got %T", cmd())
+	}
+}
+
+func TestPipelineList_LowercaseRRequestsRefreshInJobMode(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{{ID: 1, ProjectID: 10}})
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 100, ProjectID: 10}})
+
+	_, cmd := p.Update(runeKey('r'))
+	if cmd == nil {
+		t.Fatal("expected a Cmd, got nil")
+	}
+	if _, ok := cmd().(RefreshRequestMsg); !ok {
+		t.Fatalf("expected RefreshRequestMsg, got %T", cmd())
+	}
+}
+
+func TestPipelineList_NeedsPoll_TrueWhileAnyPipelineNonTerminal(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{{ID: 1, Status: api.StatusSuccess}, {ID: 2, Status: api.StatusRunning}})
+	if !p.NeedsPoll() {
+		t.Fatal("expected NeedsPoll true with one running pipeline")
+	}
+}
+
+func TestPipelineList_NeedsPoll_FalseOnceEverythingTerminal(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{{ID: 1, Status: api.StatusSuccess}, {ID: 2, Status: api.StatusFailed}})
+	if p.NeedsPoll() {
+		t.Fatal("expected NeedsPoll false once all pipelines are terminal")
+	}
+}
+
+func TestPipelineList_NeedsPoll_ChecksJobsInJobMode(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{{ID: 1, Status: api.StatusRunning}})
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 100, Status: api.StatusSuccess}})
+	if p.NeedsPoll() {
+		t.Fatal("expected NeedsPoll false in job mode when all jobs are terminal, even though the pipeline itself is running")
+	}
+
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 101, Status: api.StatusRunning}})
+	if !p.NeedsPoll() {
+		t.Fatal("expected NeedsPoll true once a running job is present")
+	}
+}
+
+func TestPipelineList_AllPipelinesReturnsUnfilteredSet(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{{ID: 1, Ref: "main"}, {ID: 2, Ref: "dev"}})
+	p.filterInput.SetValue("main")
+	p.syncPipeRows()
+
+	if len(p.filtered) != 1 {
+		t.Fatalf("test setup: expected filter to narrow to 1, got %d", len(p.filtered))
+	}
+	if got := p.AllPipelines(); len(got) != 2 {
+		t.Fatalf("AllPipelines() len = %d, want 2 (unfiltered)", len(got))
+	}
+}

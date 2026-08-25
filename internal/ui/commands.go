@@ -11,6 +11,18 @@ import (
 	"github.com/joeca/gl-pipe/internal/config"
 )
 
+// pollInterval is how often the pipeline/job matrix refreshes itself while
+// it has anything non-terminal showing.
+const pollInterval = 10 * time.Second
+
+// pollTickCmd schedules the next tickMsg. Model.pollTick reissues this
+// every time it fires, for the life of the program (invariant #3's
+// self-rescheduling pattern) — the tick itself is cheap; Model.pollTick
+// decides whether it's actually worth fetching anything.
+func pollTickCmd() tea.Cmd {
+	return tea.Tick(pollInterval, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
 func validateCredentialsCmd(ctx context.Context, url, token string, id reqID) tea.Cmd {
 	return func() tea.Msg {
 		client, err := api.NewClient(url, token)

@@ -245,10 +245,63 @@ func (m Model) Init() tea.Cmd {
 	if m.view == viewWizard {
 		return nil
 	}
+	cmds := []tea.Cmd{pollTickCmd()}
 	if m.cacheIdx.Stale(m.cfg.TTL()) || len(m.cacheIdx.Projects) == 0 {
-		return m.syncProjectsCmd()
+		cmds = append(cmds, m.syncProjectsCmd())
 	}
-	return nil
+	return tea.Batch(cmds...)
+}
+
+// pollTick fires every pollInterval for the life of the program. It's a
+// no-op — beyond rescheduling itself — unless the pipeline/job matrix is
+// on screen and has anything non-terminal left to refresh; a mid-batch
+// fetch (m.loading) is skipped too, so a poll tick never piles requests on
+// top of one already in flight.
+func (m Model) pollTick() (tea.Model, tea.Cmd) {
+	next := pollTickCmd()
+	if !m.shouldPoll() {
+		return m, next
+	}
+	cmd := m.refreshActiveMatrix()
+	if cmd == nil {
+		return m, next
+	}
+	return m, tea.Batch(cmd, next)
+}
+
+// shouldPoll gates the periodic tick: only while the pipeline/job matrix is
+// on screen, nothing else is already loading, and something shown hasn't
+// settled yet.
+func (m Model) shouldPoll() bool {
+	return m.pane == panePipelines && !m.loading && m.pipelineList.NeedsPoll()
+}
+
+// refreshActiveMatrix re-fetches whatever's currently shown in the
+// pipeline/job matrix — the job matrix by pipeline (jobsForPipelineCmd,
+// checked against the live genJobs), the pipeline matrix by individual
+// pipeline (pipelineDetailCmd, which patches in place and is harmless if
+// stale). Shared by the periodic poll and the manual 'r' refresh key.
+func (m Model) refreshActiveMatrix() tea.Cmd {
+	if m.pipelineList.InJobs() {
+		pipelines := m.pipelineList.Pipelines
+		if len(pipelines) == 0 {
+			return nil
+		}
+		cmds := make([]tea.Cmd, len(pipelines))
+		for i, pl := range pipelines {
+			cmds[i] = jobsForPipelineCmd(m.ctx, m.client, pl.ProjectID, pl.ID, m.genJobs)
+		}
+		return tea.Batch(cmds...)
+	}
+	pipelines := m.pipelineList.AllPipelines()
+	if len(pipelines) == 0 {
+		return nil
+	}
+	cmds := make([]tea.Cmd, len(pipelines))
+	for i, pl := range pipelines {
+		cmds[i] = pipelineDetailCmd(m.ctx, m.client, pl.ProjectID, pl.ID, m.genPipelines)
+	}
+	return tea.Batch(cmds...)
 }
 
 // Update implements tea.Model.
@@ -542,6 +595,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// generation — AddJobs merges the refreshed statuses back in
 		// without disturbing any other pipeline already shown.
 		return m, jobsForPipelineCmd(m.ctx, m.client, msg.projectID, msg.pipelineID, m.genJobs)
+
+	case tickMsg:
+		return m.pollTick()
+
+	case components.RefreshRequestMsg:
+		cmd := m.refreshActiveMatrix()
+		if cmd == nil {
+			return m, nil
+		}
+		m.setStatus("refreshing...")
+		return m, cmd
 
 	case components.OpenJobsMsg:
 		return m.openJobsForPipelines(msg.Pipelines)

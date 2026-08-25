@@ -328,6 +328,107 @@ func TestHandleKey_LowercaseTUsesLatestCreatedStrategy(t *testing.T) {
 	}
 }
 
+// TestShouldPoll covers the periodic-refresh gate: only poll while the
+// pipeline/job matrix is on screen, nothing else is mid-fetch, and
+// something shown hasn't settled into a terminal status yet.
+func TestShouldPoll(t *testing.T) {
+	m := newTestModel(t)
+	m.pane = panePipelines
+	m.pipelineList.SetPipelines([]api.Pipeline{{ID: 1, Status: api.StatusRunning}})
+
+	if !m.shouldPoll() {
+		t.Error("expected shouldPoll true: on the pipelines pane with a running pipeline")
+	}
+
+	m.pane = paneExplorer
+	if m.shouldPoll() {
+		t.Error("expected shouldPoll false: not on the pipelines pane")
+	}
+	m.pane = panePipelines
+
+	m.loading = true
+	if m.shouldPoll() {
+		t.Error("expected shouldPoll false: a fetch is already in flight")
+	}
+	m.loading = false
+
+	m.pipelineList.SetPipelines([]api.Pipeline{{ID: 1, Status: api.StatusSuccess}})
+	if m.shouldPoll() {
+		t.Error("expected shouldPoll false: everything shown is terminal")
+	}
+}
+
+// TestPollTick_AlwaysReschedules covers the self-rescheduling half of the
+// poll loop (invariant #3's pattern): it must return a Cmd regardless of
+// whether anything actually needed refreshing, or the loop dies silently.
+func TestPollTick_AlwaysReschedules(t *testing.T) {
+	m := newTestModel(t)
+	m.pane = paneExplorer // shouldPoll() false
+
+	_, cmd := m.pollTick()
+	if cmd == nil {
+		t.Fatal("expected pollTick to always return a reschedule Cmd, got nil")
+	}
+}
+
+// TestRefreshActiveMatrix covers the shared refresh helper behind both the
+// periodic poll and the manual 'r' key: nil when there's nothing loaded,
+// non-nil once there is, in either pipeline or job mode.
+func TestRefreshActiveMatrix(t *testing.T) {
+	m := newTestModel(t)
+
+	if cmd := m.refreshActiveMatrix(); cmd != nil {
+		t.Error("expected nil with no pipelines loaded")
+	}
+
+	m.pipelineList.SetPipelines([]api.Pipeline{{ID: 1, ProjectID: 10}})
+	if cmd := m.refreshActiveMatrix(); cmd == nil {
+		t.Error("expected a Cmd once pipelines are loaded")
+	}
+
+	m.pipelineList.ClearJobs()
+	if cmd := m.refreshActiveMatrix(); cmd != nil {
+		t.Error("expected nil in job mode before any jobs/pipelines are attached")
+	}
+	m.pipelineList.AddJobs(api.Pipeline{ID: 1, ProjectID: 10}, []api.Job{{ID: 100, ProjectID: 10}})
+	if cmd := m.refreshActiveMatrix(); cmd == nil {
+		t.Error("expected a Cmd once the job matrix has a pipeline attached")
+	}
+}
+
+// TestUpdate_RefreshRequestMsgSetsStatusWhenSomethingToRefresh covers the
+// manual 'r' key's end-to-end wiring through Update.
+func TestUpdate_RefreshRequestMsgSetsStatusWhenSomethingToRefresh(t *testing.T) {
+	m := newTestModel(t)
+	m.pipelineList.SetPipelines([]api.Pipeline{{ID: 1, ProjectID: 10}})
+
+	updated, cmd := m.Update(components.RefreshRequestMsg{})
+	mm := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a refresh Cmd")
+	}
+	if mm.statusMsg != "refreshing..." {
+		t.Fatalf("statusMsg = %q, want %q", mm.statusMsg, "refreshing...")
+	}
+}
+
+// TestUpdate_RefreshRequestMsgNoOpWhenNothingLoaded ensures pressing 'r'
+// before anything's in the matrix doesn't fire a pointless request or
+// clobber the status line.
+func TestUpdate_RefreshRequestMsgNoOpWhenNothingLoaded(t *testing.T) {
+	m := newTestModel(t)
+	m.setStatus("previous status")
+
+	updated, cmd := m.Update(components.RefreshRequestMsg{})
+	mm := updated.(Model)
+	if cmd != nil {
+		t.Fatal("expected no Cmd with nothing loaded")
+	}
+	if mm.statusMsg != "previous status" {
+		t.Fatalf("statusMsg = %q, want unchanged %q", mm.statusMsg, "previous status")
+	}
+}
+
 // TestHandleKey_CapitalMOpensMRsForStagedProjects covers the per-project
 // MR fetch: staging projects and pressing M should batch-fetch each
 // project's MRs into the same modal, not just the highlighted one.
