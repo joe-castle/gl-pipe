@@ -3,8 +3,10 @@ package ui
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -108,6 +110,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "esc":
 		if !textFocused && !m.pipelineList.InJobs() {
+			if m.downstreamOrigin {
+				m.pipelineList.ReturnToJobs()
+				m.downstreamOrigin = false
+				return m, nil
+			}
 			m.pane = paneExplorer
 			return m, nil
 		}
@@ -239,7 +246,7 @@ func (m *Model) focusedWebURL() string {
 // built by the caller (the reqID is only known once newReqID() runs here,
 // so callers get it via the build callback rather than baking it in
 // themselves).
-func (m Model) startPipelinesBatch(n int, build func(id reqID) []tea.Cmd) (tea.Model, tea.Cmd) {
+func (m Model) startPipelinesBatch(n int, build func(id reqID) []tea.Cmd) (Model, tea.Cmd) {
 	if n == 0 {
 		return m, nil
 	}
@@ -249,6 +256,10 @@ func (m Model) startPipelinesBatch(n int, build func(id reqID) []tea.Cmd) (tea.M
 	m.pipelinesPending = n
 	m.pipelinesErrored = 0
 	m.pipelinesTotal = n
+	// Any fresh, unrelated batch invalidates a pending "Esc returns to the
+	// job matrix" — openDownstreamPipeline sets it back to true right
+	// after this returns, for the one caller it actually applies to.
+	m.downstreamOrigin = false
 	m.pipelineList.SetPipelines(nil)
 	return m, tea.Batch(build(id)...)
 }
@@ -259,10 +270,11 @@ func (m Model) startPipelinesBatch(n int, build func(id reqID) []tea.Cmd) (tea.M
 // the trigger modal.
 func (m Model) openPipelinesForSelected() (tea.Model, tea.Cmd) {
 	projects := m.projectList.SelectedProjects()
+	cutoff := m.pipelineCreatedAfterCutoff()
 	return m.startPipelinesBatch(len(projects), func(id reqID) []tea.Cmd {
 		cmds := make([]tea.Cmd, len(projects))
 		for i, proj := range projects {
-			cmds[i] = pipelinesForProjectCmd(m.ctx, m.client, proj.ID, id)
+			cmds[i] = pipelinesForProjectCmd(m.ctx, m.client, proj.ID, cutoff, id)
 		}
 		return cmds
 	})
@@ -278,14 +290,27 @@ func (m Model) searchPipelinesByRef(ref string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	projects := m.cacheIdx.Projects
+	cutoff := m.pipelineCreatedAfterCutoff()
 	m.setStatus(fmt.Sprintf("searching %d project(s) for ref %q...", len(projects), ref))
 	return m.startPipelinesBatch(len(projects), func(id reqID) []tea.Cmd {
 		cmds := make([]tea.Cmd, len(projects))
 		for i, proj := range projects {
-			cmds[i] = pipelinesByRefCmd(m.ctx, m.client, proj.ID, ref, id)
+			cmds[i] = pipelinesByRefCmd(m.ctx, m.client, proj.ID, ref, cutoff, id)
 		}
 		return cmds
 	})
+}
+
+// pipelineCreatedAfterCutoff returns the GitLab-side created_after cutoff
+// derived from the configured pipeline age cap (config.yaml's
+// pipelines.max_age_days), or the zero time.Time (no filter) if unset —
+// the pre-existing default.
+func (m Model) pipelineCreatedAfterCutoff() time.Time {
+	maxAge := m.cfg.PipelineMaxAge()
+	if maxAge <= 0 {
+		return time.Time{}
+	}
+	return time.Now().Add(-maxAge)
 }
 
 // openPipelinesForMRs jumps straight from an MR selection to its
@@ -423,11 +448,38 @@ func (m Model) openJobsForPipelines(pipelines []api.Pipeline) (tea.Model, tea.Cm
 // openDownstreamPipeline jumps from a trigger job to the pipeline it kicked
 // off, replacing the job matrix with just that one pipeline — the same
 // matrix everything else feeds, so sort/filter/Enter-into-jobs/bulk-retry
-// all work on it exactly like any other pipeline.
+// all work on it exactly like any other pipeline. Sets downstreamOrigin so
+// Esc from here returns to the job matrix the jump came from instead of
+// leaving the pipelines pane entirely (see the field's doc comment).
 func (m Model) openDownstreamPipeline(projectID, pipelineID int) (tea.Model, tea.Cmd) {
-	return m.startPipelinesBatch(1, func(id reqID) []tea.Cmd {
+	mm, cmd := m.startPipelinesBatch(1, func(id reqID) []tea.Cmd {
 		return []tea.Cmd{pipelineByIDCmd(m.ctx, m.client, projectID, pipelineID, id)}
 	})
+	mm.downstreamOrigin = true
+	return mm, cmd
+}
+
+// projectPathFromPipelineURL recovers a project's path_with_namespace from
+// a pipeline's WebURL ("<base>/<namespace>/<project>/-/pipelines/<id>")
+// without an extra API call — used to backfill the PROJECT column for a
+// pipeline whose project isn't one of the user's synced projects (most
+// visibly, a downstream pipeline a trigger job kicks off can live in an
+// entirely different repo than any default_groups covers).
+func projectPathFromPipelineURL(webURL string) (string, bool) {
+	u, err := url.Parse(webURL)
+	if err != nil {
+		return "", false
+	}
+	const marker = "/-/pipelines/"
+	i := strings.Index(u.Path, marker)
+	if i < 0 {
+		return "", false
+	}
+	path := strings.Trim(u.Path[:i], "/")
+	if path == "" {
+		return "", false
+	}
+	return path, true
 }
 
 // saveChosenGroups merges the discovery picker's selection into the active

@@ -112,10 +112,11 @@ type PipelineList struct {
 	filtering    bool
 	filterInput  textinput.Model
 
-	jobs      []api.Job
-	jobTable  table.Model
-	Pipelines []api.Pipeline // the pipeline(s) whose jobs are currently shown
-	SelectedJ map[int]bool   // job ID -> staged for bulk action
+	jobs        []api.Job
+	jobFiltered []api.Job // jobs after the text filter; what's actually shown
+	jobTable    table.Model
+	Pipelines   []api.Pipeline // the pipeline(s) whose jobs are currently shown
+	SelectedJ   map[int]bool   // job ID -> staged for bulk action
 
 	width, height int
 }
@@ -147,7 +148,7 @@ func NewPipelineList() PipelineList {
 	jobTable := table.New(table.WithColumns(jobCols), table.WithFocused(true), table.WithHeight(15), table.WithStyles(TableStyles()))
 
 	filter := textinput.New()
-	filter.Placeholder = "filter by ref, status, project, author, or SHA..."
+	filter.Placeholder = "filter..." // pipelines: ref/status/project/author/SHA — jobs: name/stage/status/project/runner
 	filter.Prompt = "/ "
 
 	return PipelineList{
@@ -199,15 +200,21 @@ func (p *PipelineList) SetSize(w, h int) {
 // SetProjectNames supplies a project ID -> path lookup for the Project column.
 func (p *PipelineList) SetProjectNames(names map[int]string) { p.projectNames = names }
 
-// SetPipelines replaces the pipeline matrix contents. The text filter is
-// reset — a fresh batch (e.g. re-pressing Enter for a different staged
-// set) shouldn't leave stale filter text quietly hiding the new rows.
+// SetPipelines replaces the pipeline matrix contents. The text filter and
+// staging are both reset — a fresh batch (e.g. re-pressing Enter for a
+// different staged set, or jumping to a downstream pipeline from a bridge
+// job) shouldn't leave stale filter text quietly hiding the new rows, nor
+// stale Selected IDs that don't overlap with the new batch: since
+// SelectedPipelines() only falls back to the highlighted row when
+// Selected is empty, a leftover staged ID from an unrelated earlier batch
+// silently made every batch action (Enter included) act on nothing.
 func (p *PipelineList) SetPipelines(pipelines []api.Pipeline) {
 	p.pipelines = pipelines
 	p.mode = modePipelines
 	p.filtering = false
 	p.filterInput.SetValue("")
 	p.filterInput.Blur()
+	p.Selected = map[int]bool{}
 	p.syncPipeRows()
 }
 
@@ -439,12 +446,18 @@ func (p *PipelineList) FindPipeline(id int) (api.Pipeline, bool) {
 
 // ClearJobs resets the job matrix and enters job-matrix mode, ready for
 // AddJobs calls to fill it in — mirrors how SetPipelines(nil) then
-// AddOrUpdate is used to build up the multi-project pipeline matrix.
+// AddOrUpdate is used to build up the multi-project pipeline matrix. The
+// text filter is reset too, for the same reason SetPipelines resets it: a
+// fresh job batch shouldn't inherit stale filter text from a previous job
+// view (or from browsing pipelines) quietly hiding the new rows.
 func (p *PipelineList) ClearJobs() {
 	p.jobs = nil
 	p.Pipelines = nil
 	p.mode = modeJobs
 	p.SelectedJ = map[int]bool{}
+	p.filtering = false
+	p.filterInput.SetValue("")
+	p.filterInput.Blur()
 	p.syncJobRows()
 }
 
@@ -480,14 +493,44 @@ func (p *PipelineList) upsertJob(j api.Job) {
 	p.jobs = append(p.jobs, j)
 }
 
+// jobMatches reports whether j matches query as a case-insensitive
+// substring of its name, stage, status, project, or runner — mirrors
+// pipelineMatches for the job matrix's own '/' filter.
+func (p *PipelineList) jobMatches(j api.Job, query string) bool {
+	if query == "" {
+		return true
+	}
+	haystack := strings.ToLower(strings.Join([]string{
+		j.Name, j.Stage, string(j.Status), p.projectNames[j.ProjectID], j.RunnerTag,
+	}, " "))
+	return strings.Contains(haystack, query)
+}
+
+func (p *PipelineList) filterJobsList() {
+	query := strings.ToLower(p.filterInput.Value())
+	if query == "" {
+		p.jobFiltered = append([]api.Job(nil), p.jobs...)
+		return
+	}
+	filtered := make([]api.Job, 0, len(p.jobs))
+	for _, j := range p.jobs {
+		if p.jobMatches(j, query) {
+			filtered = append(filtered, j)
+		}
+	}
+	p.jobFiltered = filtered
+}
+
 func (p *PipelineList) syncJobRows() {
+	p.filterJobsList()
+
 	byID := make(map[int]api.Pipeline, len(p.Pipelines))
 	for _, pl := range p.Pipelines {
 		byID[pl.ID] = pl
 	}
 
-	rows := make([]table.Row, len(p.jobs))
-	for i, j := range p.jobs {
+	rows := make([]table.Row, len(p.jobFiltered))
+	for i, j := range p.jobFiltered {
 		check := " "
 		if p.SelectedJ[j.ID] {
 			check = "x"
@@ -534,10 +577,10 @@ func jobRunnerCell(j api.Job) string {
 // HighlightedJob returns the job under the cursor in job-matrix mode.
 func (p *PipelineList) HighlightedJob() (api.Job, bool) {
 	i := p.jobTable.Cursor()
-	if i < 0 || i >= len(p.jobs) {
+	if i < 0 || i >= len(p.jobFiltered) {
 		return api.Job{}, false
 	}
-	return p.jobs[i], true
+	return p.jobFiltered[i], true
 }
 
 // SelectedJobs returns staged jobs, or the highlighted one if none staged.
@@ -561,13 +604,31 @@ func (p *PipelineList) SelectedJobs() []api.Job {
 // is currently showing.
 func (p *PipelineList) InJobs() bool { return p.mode == modeJobs }
 
+// ReturnToJobs switches back to the job matrix without re-fetching —
+// jobs/Pipelines are left exactly as they were, only the mode changed
+// (see SetPipelines, and Model.downstreamOrigin's doc comment for why
+// this is safe to call: it's only reached along a path that started from
+// a job matrix in the first place, so there's always something valid to
+// return to).
+func (p *PipelineList) ReturnToJobs() { p.mode = modeJobs }
+
 // Count returns how many pipelines are currently in the matrix (unfiltered).
 func (p *PipelineList) Count() int { return len(p.pipelines) }
 
-// HasTextFocus reports whether the pipeline-matrix filter input owns
-// keystrokes, so the root model knows not to steal <Space> for the leader
-// menu.
-func (p *PipelineList) HasTextFocus() bool { return p.mode == modePipelines && p.filtering }
+// HasTextFocus reports whether the filter input (pipeline or job matrix —
+// both share it, only one mode is ever active at a time) owns keystrokes,
+// so the root model knows not to steal <Space> for the leader menu.
+func (p *PipelineList) HasTextFocus() bool { return p.filtering }
+
+// syncRowsForMode re-runs the filter+row build for whichever matrix is
+// currently showing — used by updateFilter, which is shared between both.
+func (p *PipelineList) syncRowsForMode() {
+	if p.mode == modeJobs {
+		p.syncJobRows()
+	} else {
+		p.syncPipeRows()
+	}
+}
 
 func (p PipelineList) updateFilter(msg tea.Msg) (PipelineList, tea.Cmd) {
 	if km, ok := msg.(tea.KeyMsg); ok {
@@ -576,7 +637,7 @@ func (p PipelineList) updateFilter(msg tea.Msg) (PipelineList, tea.Cmd) {
 			p.filterInput.SetValue("")
 			p.filterInput.Blur()
 			p.filtering = false
-			p.syncPipeRows()
+			p.syncRowsForMode()
 			return p, nil
 		case "enter":
 			p.filterInput.Blur()
@@ -586,12 +647,12 @@ func (p PipelineList) updateFilter(msg tea.Msg) (PipelineList, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	p.filterInput, cmd = p.filterInput.Update(msg)
-	p.syncPipeRows()
+	p.syncRowsForMode()
 	return p, cmd
 }
 
 func (p PipelineList) Update(msg tea.Msg) (PipelineList, tea.Cmd) {
-	if p.mode == modePipelines && p.filtering {
+	if p.filtering {
 		return p.updateFilter(msg)
 	}
 
@@ -639,6 +700,10 @@ func (p PipelineList) Update(msg tea.Msg) (PipelineList, tea.Cmd) {
 			}
 		case modeJobs:
 			switch km.String() {
+			case "/":
+				p.filtering = true
+				p.filterInput.Focus()
+				return p, nil
 			case "esc":
 				p.mode = modePipelines
 				return p, nil
@@ -663,8 +728,8 @@ func (p PipelineList) Update(msg tea.Msg) (PipelineList, tea.Cmd) {
 				retry := km.String() == "R"
 				return p, func() tea.Msg { return BulkJobActionMsg{Targets: targets, Retry: retry} }
 			case "a":
-				ids := make([]int, len(p.jobs))
-				for i, j := range p.jobs {
+				ids := make([]int, len(p.jobFiltered))
+				for i, j := range p.jobFiltered {
 					ids[i] = j.ID
 				}
 				toggleSetAll(p.SelectedJ, ids)
@@ -695,12 +760,19 @@ func (p PipelineList) View() string {
 		default:
 			header = fmt.Sprintf("Jobs for %d pipelines — %d staged\n", len(p.Pipelines), len(p.SelectedJ))
 		}
+		if p.filterInput.Value() != "" {
+			header = fmt.Sprintf("%d/%d jobs shown — %d staged\n", len(p.jobFiltered), len(p.jobs), len(p.SelectedJ))
+		}
+		if p.filtering {
+			header = p.filterInput.View() + "\n" + header
+		}
 		help := "\n" + RenderHelp(
 			[2]string{"x", "stage"},
 			[2]string{"a", "stage/unstage all"},
 			[2]string{"enter", "view logs / downstream pipeline"},
 			[2]string{"R", "bulk retry"},
 			[2]string{"K", "bulk cancel"},
+			[2]string{"/", "filter"},
 			[2]string{"r", "refresh now"},
 			[2]string{"esc", "back"},
 		)

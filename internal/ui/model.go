@@ -134,6 +134,19 @@ type Model struct {
 	refsTotal   int
 	refLockMode refLockStrategy // which strategy the in-flight refsPending batch is using
 
+	// downstreamOrigin is true right after landing a downstream pipeline
+	// via a bridge job (openDownstreamPipeline) — PipelineList.Pipelines/
+	// jobs are left untouched by that jump (only the *mode* changes, via
+	// SetPipelines), so the job matrix the jump came from is still sitting
+	// there in memory to go back to. It lets Esc from the resulting
+	// (single-row) pipeline view return to that job matrix instead of
+	// leaving the pipelines pane for the explorer, same as every other
+	// top-level pipeline view's Esc would. Any other action that starts a
+	// fresh, unrelated pipeline batch (startPipelinesBatch) resets it,
+	// since "Esc goes back to a job view" would be wrong once the
+	// underlying job data no longer corresponds to what's showing.
+	downstreamOrigin bool
+
 	// progressBar renders the loading status line's progress bar
 	// (loadingProgress picks which *Pending/*Total pair, if any, is
 	// currently in flight) — a static ViewAs(fraction) render, not the
@@ -602,6 +615,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pipelinesErrored++
 		} else {
 			for _, pl := range msg.pipelines {
+				// A pipeline's project isn't necessarily one the user has
+				// synced (default_groups) — most visibly, a downstream
+				// pipeline a trigger job kicks off can live in an entirely
+				// different repo. Without an entry here the PROJECT column
+				// silently rendered blank; recover it from the pipeline's
+				// own WebURL rather than an extra API round trip.
+				if _, known := m.projectNames[pl.ProjectID]; !known {
+					if path, ok := projectPathFromPipelineURL(pl.WebURL); ok {
+						m.projectNames[pl.ProjectID] = path
+					}
+				}
 				m.pipelineList.AddOrUpdate(pl)
 			}
 			m.pane = panePipelines

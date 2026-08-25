@@ -19,6 +19,8 @@ instances:
     token: "glpat-yyyy"
 cache:
   ttl_minutes: 30
+pipelines:
+  max_age_days: 30
 presets:
   deploy_dev:
     variables:
@@ -52,6 +54,9 @@ func TestLoad_ParsesValidConfig(t *testing.T) {
 	}
 	if cfg.Presets["deploy_dev"].Variables["DEPLOY_ENV"] != "development" {
 		t.Errorf("preset variable not parsed correctly")
+	}
+	if cfg.PipelineMaxAge() != 30*24*time.Hour {
+		t.Errorf("PipelineMaxAge() = %v, want 30 days", cfg.PipelineMaxAge())
 	}
 }
 
@@ -166,6 +171,24 @@ func TestTTL_UsesConfiguredMinutes(t *testing.T) {
 	cfg := &Config{Cache: CacheConfig{TTLMinutes: 5}}
 	if got := cfg.TTL(); got != 5*time.Minute {
 		t.Errorf("TTL() = %v, want 5m", got)
+	}
+}
+
+// TestPipelineMaxAge_DefaultsToZeroWhenUnset covers the user request for a
+// configurable pipeline age cap: unset must mean "no cap" (0), not some
+// implicit default that would silently hide pipelines for existing users
+// who never configured it.
+func TestPipelineMaxAge_DefaultsToZeroWhenUnset(t *testing.T) {
+	cfg := &Config{}
+	if got := cfg.PipelineMaxAge(); got != 0 {
+		t.Errorf("PipelineMaxAge() = %v, want 0 (no cap) when unset", got)
+	}
+}
+
+func TestPipelineMaxAge_UsesConfiguredDays(t *testing.T) {
+	cfg := &Config{Pipelines: PipelinesConfig{MaxAgeDays: 30}}
+	if got := cfg.PipelineMaxAge(); got != 30*24*time.Hour {
+		t.Errorf("PipelineMaxAge() = %v, want 30 days", got)
 	}
 }
 

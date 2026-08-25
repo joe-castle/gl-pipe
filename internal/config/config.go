@@ -21,6 +21,7 @@ type Config struct {
 	CurrentInstance string              `yaml:"current_instance"`
 	Instances       map[string]Instance `yaml:"instances"`
 	Cache           CacheConfig         `yaml:"cache"`
+	Pipelines       PipelinesConfig     `yaml:"pipelines,omitempty"`
 	Presets         map[string]Preset   `yaml:"presets,omitempty"`
 }
 
@@ -35,6 +36,17 @@ type Instance struct {
 // CacheConfig controls the local project index TTL.
 type CacheConfig struct {
 	TTLMinutes int `yaml:"ttl_minutes"`
+}
+
+// PipelinesConfig controls how broad pipeline queries (viewing staged
+// projects' pipelines, a ref search) are scoped.
+type PipelinesConfig struct {
+	// MaxAgeDays caps how far back a pipeline query looks (GitLab's
+	// created_after filter, applied server-side — fewer results over the
+	// wire, not just a client-side hide). 0/unset means no cap, the
+	// pre-existing default: only each request's own page-size limit
+	// applies, same as before this existed.
+	MaxAgeDays int `yaml:"max_age_days,omitempty"`
 }
 
 // Preset is a named bundle of pipeline trigger variables.
@@ -133,4 +145,13 @@ func (c *Config) TTL() time.Duration {
 		return 60 * time.Minute
 	}
 	return time.Duration(c.Cache.TTLMinutes) * time.Minute
+}
+
+// PipelineMaxAge returns how far back pipeline queries should look, or 0
+// (no cap) if unset.
+func (c *Config) PipelineMaxAge() time.Duration {
+	if c.Pipelines.MaxAgeDays <= 0 {
+		return 0
+	}
+	return time.Duration(c.Pipelines.MaxAgeDays) * 24 * time.Hour
 }

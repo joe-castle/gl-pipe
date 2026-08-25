@@ -391,6 +391,28 @@ func TestHandleKey_LowercaseTUsesLatestCreatedStrategy(t *testing.T) {
 	}
 }
 
+// TestPipelineCreatedAfterCutoff covers the user-requested configurable
+// pipeline age cap: unset must mean "no cap" (zero time.Time, so
+// pipelinesForProjectCmd/pipelinesByRefCmd omit the filter entirely),
+// while a configured cap becomes a concrete cutoff roughly that far in
+// the past.
+func TestPipelineCreatedAfterCutoff(t *testing.T) {
+	m := newTestModel(t)
+	if got := m.pipelineCreatedAfterCutoff(); !got.IsZero() {
+		t.Fatalf("expected zero cutoff (no cap) when unconfigured, got %v", got)
+	}
+
+	m.cfg.Pipelines.MaxAgeDays = 30
+	cutoff := m.pipelineCreatedAfterCutoff()
+	if cutoff.IsZero() {
+		t.Fatal("expected a non-zero cutoff once MaxAgeDays is configured")
+	}
+	wantAround := time.Now().Add(-30 * 24 * time.Hour)
+	if diff := wantAround.Sub(cutoff); diff < -time.Minute || diff > time.Minute {
+		t.Fatalf("cutoff = %v, want roughly %v (30 days ago)", cutoff, wantAround)
+	}
+}
+
 // TestShouldPoll covers the periodic-refresh gate: only poll while the
 // pipeline/job matrix is on screen, nothing else is mid-fetch, and
 // something shown hasn't settled into a terminal status yet.
@@ -829,6 +851,38 @@ func TestUpdate_OpenDownstreamPipelineMsgFetchesAndShowsIt(t *testing.T) {
 	}
 }
 
+// TestUpdate_OpenDownstreamPipelineMsgBackfillsUnknownProjectName is a
+// real user-reported bug: a downstream pipeline's project is often not
+// one of the user's synced projects (default_groups) at all — e.g. a
+// separate infra/deploy repo a deploy job triggers into — so
+// m.projectNames had no entry for it and the PROJECT column rendered
+// blank. Since the pipeline response always carries a WebURL
+// (".../<namespace>/<project>/-/pipelines/<id>"), the project path can be
+// recovered from that without an extra API round trip.
+func TestUpdate_OpenDownstreamPipelineMsgBackfillsUnknownProjectName(t *testing.T) {
+	m := newTestModel(t)
+	m.pane = panePipelines
+
+	updated, _ := m.Update(components.OpenDownstreamPipelineMsg{ProjectID: 20, PipelineID: 555})
+	mm := updated.(Model)
+
+	updated, _ = mm.Update(pipelinesLoadedMsg{
+		reqID: mm.genPipelines, projectID: 20,
+		pipelines: []api.Pipeline{{
+			ID: 555, ProjectID: 20, IID: 42,
+			WebURL: "https://gitlab.example.com/infra/deploy-tool/-/pipelines/555",
+		}},
+	})
+	mm = updated.(Model)
+
+	if mm.projectNames[20] != "infra/deploy-tool" {
+		t.Fatalf("projectNames[20] = %q, want infra/deploy-tool", mm.projectNames[20])
+	}
+	if !strings.Contains(mm.pipelineList.View(), "infra/deploy-tool") {
+		t.Fatalf("expected the backfilled project name in the rendered view, got:\n%s", mm.pipelineList.View())
+	}
+}
+
 // TestUpdate_OpenDownstreamPipelineMsgWithZeroIDShowsStatus covers a
 // trigger job whose downstream pipeline hasn't started yet — no fetch
 // should fire, and the user should be told why instead of nothing
@@ -1060,5 +1114,66 @@ func TestHandleKey_TabSwitchesPane(t *testing.T) {
 	mm := updated.(Model)
 	if mm.pane != panePipelines {
 		t.Fatalf("expected tab to switch to panePipelines, got %v", mm.pane)
+	}
+}
+
+// TestHandleKey_EscAfterDownstreamPipelineReturnsToJobMatrix covers the
+// user-reported navigation gap: Esc from a downstream pipeline (landed on
+// via Enter on a bridge job) went all the way back to the project
+// explorer instead of the job matrix the jump came from. The job matrix's
+// own data is never touched by the jump (only PipelineList's mode
+// changes), so going back just needs to flip the mode again.
+func TestHandleKey_EscAfterDownstreamPipelineReturnsToJobMatrix(t *testing.T) {
+	m := newTestModel(t)
+	m.pane = panePipelines
+	m.pipelineList.SetPipelines([]api.Pipeline{{ID: 1, ProjectID: 10}})
+	m.pipelineList.AddJobs(api.Pipeline{ID: 1, ProjectID: 10}, []api.Job{
+		{ID: 100, ProjectID: 10, PipelineID: 1, IsBridge: true, DownstreamProjectID: 20, DownstreamPipelineID: 555},
+	})
+
+	updated, _ := m.Update(components.OpenDownstreamPipelineMsg{ProjectID: 20, PipelineID: 555})
+	mm := updated.(Model)
+	updated, _ = mm.Update(pipelinesLoadedMsg{
+		reqID: mm.genPipelines, projectID: 20,
+		pipelines: []api.Pipeline{{ID: 555, ProjectID: 20, IID: 42}},
+	})
+	mm = updated.(Model)
+	if mm.pipelineList.InJobs() {
+		t.Fatal("expected the pipeline matrix (single downstream row), not jobs, right after the jump")
+	}
+	if !mm.downstreamOrigin {
+		t.Fatal("expected downstreamOrigin=true after the jump")
+	}
+
+	updated, _ = mm.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mm = updated.(Model)
+
+	if mm.pane != panePipelines {
+		t.Fatalf("expected to stay on panePipelines, got %v", mm.pane)
+	}
+	if !mm.pipelineList.InJobs() {
+		t.Fatal("expected Esc to return to the job matrix, not the project explorer")
+	}
+	if j, ok := mm.pipelineList.HighlightedJob(); !ok || j.ID != 100 {
+		t.Fatalf("expected the original job matrix's bridge job (100) still there to go back to, got %+v ok=%v", j, ok)
+	}
+	if mm.downstreamOrigin {
+		t.Fatal("expected downstreamOrigin consumed (false) after Esc uses it")
+	}
+}
+
+// TestHandleKey_EscOnAnUnrelatedPipelineViewGoesToExplorer is the
+// non-regression check: downstreamOrigin must not leak into ordinary
+// pipeline views (staged projects, ref search, MR jump) — Esc from those
+// still goes straight to the explorer, same as always.
+func TestHandleKey_EscOnAnUnrelatedPipelineViewGoesToExplorer(t *testing.T) {
+	m := newTestModel(t)
+	m.pane = panePipelines
+	m.pipelineList.SetPipelines([]api.Pipeline{{ID: 1, ProjectID: 10}})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mm := updated.(Model)
+	if mm.pane != paneExplorer {
+		t.Fatalf("expected Esc to go to paneExplorer, got %v", mm.pane)
 	}
 }

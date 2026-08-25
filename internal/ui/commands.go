@@ -146,9 +146,9 @@ func createPipelineCmd(ctx context.Context, client *api.Client, projectID int, r
 	}
 }
 
-func pipelinesForProjectCmd(ctx context.Context, client *api.Client, projectID int, id reqID) tea.Cmd {
+func pipelinesForProjectCmd(ctx context.Context, client *api.Client, projectID int, createdAfter time.Time, id reqID) tea.Cmd {
 	return func() tea.Msg {
-		pipelines, err := client.ListPipelines(ctx, projectID)
+		pipelines, err := client.ListPipelines(ctx, projectID, createdAfter)
 		return pipelinesLoadedMsg{reqID: id, projectID: projectID, pipelines: pipelines, err: err}
 	}
 }
@@ -158,9 +158,9 @@ func pipelinesForProjectCmd(ctx context.Context, client *api.Client, projectID i
 // pipelinesForProjectCmd, so a ref search across every known project reuses
 // the exact same accumulate-into-the-matrix handling as viewing staged
 // projects' pipelines.
-func pipelinesByRefCmd(ctx context.Context, client *api.Client, projectID int, ref string, id reqID) tea.Cmd {
+func pipelinesByRefCmd(ctx context.Context, client *api.Client, projectID int, ref string, createdAfter time.Time, id reqID) tea.Cmd {
 	return func() tea.Msg {
-		pipelines, err := client.ListPipelinesByRef(ctx, projectID, ref)
+		pipelines, err := client.ListPipelinesByRef(ctx, projectID, ref, createdAfter)
 		return pipelinesLoadedMsg{reqID: id, projectID: projectID, pipelines: pipelines, err: err}
 	}
 }

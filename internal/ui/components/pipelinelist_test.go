@@ -242,6 +242,29 @@ func TestPipelineList_NewBatchResetsFilter(t *testing.T) {
 	}
 }
 
+// TestPipelineList_NewBatchResetsStaleStaging is a real user-reported bug:
+// staging pipelines in one batch, then loading an entirely different batch
+// (e.g. jumping to a downstream pipeline from a bridge job) left the old
+// Selected IDs in place. Since SelectedPipelines() only falls back to the
+// highlighted row when Selected is *empty*, a new batch whose pipeline IDs
+// don't overlap with the stale staged set silently returned nothing at
+// all — "pressing enter doesn't do anything" for the new pipeline.
+func TestPipelineList_NewBatchResetsStaleStaging(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{{ID: 1, ProjectID: 10}})
+	p.Selected[1] = true
+
+	p.SetPipelines([]api.Pipeline{{ID: 99, ProjectID: 20}})
+
+	if len(p.Selected) != 0 {
+		t.Fatalf("expected Selected reset on a fresh batch, got %+v", p.Selected)
+	}
+	targets := p.SelectedPipelines()
+	if len(targets) != 1 || targets[0].ID != 99 {
+		t.Fatalf("expected SelectedPipelines to fall back to the new highlighted pipeline, got %+v", targets)
+	}
+}
+
 func pipelineIDs(pipelines []api.Pipeline) []int {
 	ids := make([]int, len(pipelines))
 	for i, p := range pipelines {
@@ -608,5 +631,129 @@ func TestPipelineList_AllPipelinesReturnsUnfilteredSet(t *testing.T) {
 	}
 	if got := p.AllPipelines(); len(got) != 2 {
 		t.Fatalf("AllPipelines() len = %d, want 2 (unfiltered)", len(got))
+	}
+}
+
+// TestPipelineList_SlashOpensFilterInJobMode covers the user request: the
+// job matrix had no '/' filter at all, unlike the pipeline matrix.
+func TestPipelineList_SlashOpensFilterInJobMode(t *testing.T) {
+	p := NewPipelineList()
+	p.ClearJobs()
+
+	updated, _ := p.Update(runeKey('/'))
+	if !updated.filtering {
+		t.Fatal("expected '/' to enter filtering mode in the job matrix")
+	}
+	if !updated.HasTextFocus() {
+		t.Fatal("expected HasTextFocus true while filtering the job matrix")
+	}
+}
+
+func TestPipelineList_JobFilterMatchesName(t *testing.T) {
+	p := NewPipelineList()
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{
+		{ID: 10, Name: "deploy-prod"},
+		{ID: 11, Name: "unit-tests"},
+		{ID: 12, Name: "deploy-staging"},
+	})
+
+	updated, _ := p.Update(runeKey('/'))
+	updated.filterInput.SetValue("deploy")
+	updated.syncJobRows()
+
+	if len(updated.jobFiltered) != 2 {
+		t.Fatalf("expected 2 jobs matching 'deploy', got %d", len(updated.jobFiltered))
+	}
+}
+
+func TestPipelineList_JobFilterMatchesStageAndStatus(t *testing.T) {
+	p := NewPipelineList()
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{
+		{ID: 10, Stage: "deploy", Status: api.StatusFailed},
+		{ID: 11, Stage: "test", Status: api.StatusSuccess},
+	})
+
+	updated, _ := p.Update(runeKey('/'))
+	updated.filterInput.SetValue("failed")
+	updated.syncJobRows()
+
+	if len(updated.jobFiltered) != 1 || updated.jobFiltered[0].ID != 10 {
+		t.Fatalf("expected only the failed job, got %v", updated.jobFiltered)
+	}
+}
+
+func TestPipelineList_JobFilterHighlightedUsesFilteredIndex(t *testing.T) {
+	p := NewPipelineList()
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{
+		{ID: 10, Name: "unit-tests"},
+		{ID: 11, Name: "deploy-prod"},
+	})
+
+	updated, _ := p.Update(runeKey('/'))
+	updated.filterInput.SetValue("deploy")
+	updated.syncJobRows()
+
+	j, ok := updated.HighlightedJob()
+	if !ok || j.ID != 11 {
+		t.Fatalf("expected the filtered job highlighted, got %+v ok=%v", j, ok)
+	}
+}
+
+// TestPipelineList_JobStagingSurvivesFilterChanges mirrors the pipeline
+// matrix's equivalent: staging a job stays staged even if a later filter
+// hides it from the visible rows.
+func TestPipelineList_JobStagingSurvivesFilterChanges(t *testing.T) {
+	p := NewPipelineList()
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{
+		{ID: 10, Name: "unit-tests"},
+		{ID: 11, Name: "deploy-prod"},
+	})
+	p.SelectedJ[10] = true
+
+	updated, _ := p.Update(runeKey('/'))
+	updated.filterInput.SetValue("deploy")
+	updated.syncJobRows()
+
+	if !updated.SelectedJ[10] {
+		t.Fatal("expected job 10 to stay staged even though the filter now hides it")
+	}
+}
+
+// TestPipelineList_ClearJobsResetsFilter mirrors SetPipelines' equivalent
+// reset — a fresh job batch shouldn't inherit stale filter text from a
+// previous job view or from browsing pipelines.
+func TestPipelineList_ClearJobsResetsFilter(t *testing.T) {
+	p := NewPipelineList()
+	p.ClearJobs()
+	updated, _ := p.Update(runeKey('/'))
+	updated.filterInput.SetValue("something")
+
+	updated.ClearJobs()
+
+	if updated.filtering || updated.filterInput.Value() != "" {
+		t.Fatalf("expected ClearJobs to reset the filter, got filtering=%v value=%q", updated.filtering, updated.filterInput.Value())
+	}
+}
+
+func TestPipelineList_SelectAllJobsRespectsActiveFilter(t *testing.T) {
+	p := NewPipelineList()
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{
+		{ID: 10, Name: "unit-tests"},
+		{ID: 11, Name: "deploy-prod"},
+	})
+
+	updated, _ := p.Update(runeKey('/'))
+	updated.filterInput.SetValue("deploy")
+	updated.syncJobRows()
+	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyEnter}) // stop filtering, keep the query
+	updated, _ = updated.Update(runeKey('a'))
+
+	if len(updated.SelectedJ) != 1 || !updated.SelectedJ[11] {
+		t.Fatalf("expected 'a' to stage only the filtered job (11), got %+v", updated.SelectedJ)
 	}
 }

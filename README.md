@@ -61,6 +61,8 @@ instances:
     token: "${GITLAB_TOKEN}"       # expanded from the environment
 cache:
   ttl_minutes: 60
+pipelines:
+  max_age_days: 90                 # optional — omit for no cap (see below)
 presets:
   deploy_dev:
     variables:
@@ -71,6 +73,8 @@ presets:
 A token can be a literal PAT, an `${ENV_VAR}` reference expanded at load time, or a `token_command: <shell command>` whose stdout is used as the token (e.g. to pull from a password manager). `token_command` takes precedence over `token` when both are set. The config file itself is written with owner-only (`0600`) permissions.
 
 The project explorer only syncs projects from an instance's `default_groups` — there's no unscoped "list every project on the instance" mode, to keep sync fast and predictable on large instances. You don't have to hand-type these: press `<Space> g` to fetch every group you're a member of and multi-select the ones you want (`x` to toggle, `Enter` on the `[ Save ]` row) — selections are merged into `default_groups` and gl-pipe resyncs immediately. If an instance has no `default_groups` configured yet, the status bar says so explicitly and points you at `<Space> g`.
+
+`pipelines.max_age_days` caps how far back a pipeline query looks (viewing staged projects' pipelines, or a `<Space> b` ref search) — pipelines created before the cutoff are excluded server-side by GitLab (`created_after`), not just hidden client-side, so a large/old project's history doesn't slow down every load. Unset (the default) means no cap, same behavior as before this existed. There's no in-app editor for this yet — same as the cache TTL, edit `config.yaml` directly and restart.
 
 ## Keyboard shortcuts
 
@@ -205,12 +209,13 @@ The matrix polls automatically every 10s while any pipeline shown hasn't reached
 | `Enter` | Stream that job's live log — or, on a deploy/trigger job, jump to the downstream pipeline it kicked off |
 | `R` | Bulk retry the staged (or highlighted) job(s) |
 | `K` | Bulk cancel the staged (or highlighted) job(s) |
+| `/` | Filter by job name, stage, status, project, or runner (substring, case-insensitive) |
 | `r` | Refresh now, without waiting for the next automatic poll |
 | `Esc` | Back to the pipeline matrix |
 
-Showing jobs from more than one pipeline adds `Project` and `Pipeline` (`#IID`) columns so you can tell which job belongs to which run. The same automatic polling as the pipeline matrix applies here, keyed off the jobs' own statuses rather than the parent pipeline's.
+Showing jobs from more than one pipeline adds `Project` and `Pipeline` (`#IID`) columns so you can tell which job belongs to which run. The same automatic polling as the pipeline matrix applies here, keyed off the jobs' own statuses rather than the parent pipeline's. `/` works exactly like the pipeline matrix's: it narrows what's already loaded, staged jobs (`x`) stay staged even if a filter later hides them, and `a` (stage/unstage all) respects the active filter.
 
-**Trigger jobs (`trigger:` in `.gitlab-ci.yml`)** — e.g. a deploy job that kicks off a downstream deployment pipeline — show up in the matrix like any other job, with the RUNNER column repurposed to point at the downstream pipeline instead: `→ #45 ✓` (pipeline IID + its status), or `→ (pending)` if the downstream pipeline hasn't started yet. GitLab reports these through a separate API endpoint from regular jobs, so they were previously invisible here entirely — that's a gap in this tool, not something GitLab's API can't tell you. `Enter` on one jumps straight to the downstream pipeline in the pipeline matrix (same view, same sort/filter/retry — nothing new to learn), rather than trying to stream a log that doesn't exist for a trigger job.
+**Trigger jobs (`trigger:` in `.gitlab-ci.yml`)** — e.g. a deploy job that kicks off a downstream deployment pipeline — show up in the matrix like any other job, with the RUNNER column repurposed to point at the downstream pipeline instead: `→ #45 ✓` (pipeline IID + its status), or `→ (pending)` if the downstream pipeline hasn't started yet. GitLab reports these through a separate API endpoint from regular jobs, so they were previously invisible here entirely — that's a gap in this tool, not something GitLab's API can't tell you. `Enter` on one jumps straight to the downstream pipeline in the pipeline matrix (same view, same sort/filter/retry — nothing new to learn), rather than trying to stream a log that doesn't exist for a trigger job. `Esc` from that downstream pipeline returns to the job matrix you jumped from (not the project explorer) — the one place in the app where `Esc` on a top-level pipeline view doesn't go straight to the explorer.
 
 ### Pipeline trigger modal
 

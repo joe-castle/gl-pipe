@@ -8,28 +8,39 @@ import (
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 )
 
-// ListPipelines returns the most recent pipelines for a project, newest first.
-// Entries do not include the triggering user or duration; call GetPipeline to
-// enrich a specific row once it's visible.
-func (c *Client) ListPipelines(ctx context.Context, projectID int) ([]Pipeline, error) {
-	return c.listPipelines(ctx, projectID, &gitlab.ListProjectPipelinesOptions{
+// ListPipelines returns the most recent pipelines for a project, newest
+// first, optionally excluding anything created before createdAfter (the
+// zero time.Time means no cap — every pipeline the page-size limit below
+// allows). Entries do not include the triggering user or duration; call
+// GetPipeline to enrich a specific row once it's visible.
+func (c *Client) ListPipelines(ctx context.Context, projectID int, createdAfter time.Time) ([]Pipeline, error) {
+	opts := &gitlab.ListProjectPipelinesOptions{
 		ListOptions: gitlab.ListOptions{PerPage: 50},
 		OrderBy:     gitlab.Ptr("updated_at"),
 		Sort:        gitlab.Ptr("desc"),
-	})
+	}
+	if !createdAfter.IsZero() {
+		opts.CreatedAfter = gitlab.Ptr(createdAfter)
+	}
+	return c.listPipelines(ctx, projectID, opts)
 }
 
 // ListPipelinesByRef returns pipelines for a project matching an exact ref
 // (branch or tag) name — GitLab's ref filter is an exact match, not a
 // substring search. Used to search for pipelines across many projects by
-// ref without first knowing which project they belong to.
-func (c *Client) ListPipelinesByRef(ctx context.Context, projectID int, ref string) ([]Pipeline, error) {
-	return c.listPipelines(ctx, projectID, &gitlab.ListProjectPipelinesOptions{
+// ref without first knowing which project they belong to. createdAfter is
+// the same optional age cap as ListPipelines.
+func (c *Client) ListPipelinesByRef(ctx context.Context, projectID int, ref string, createdAfter time.Time) ([]Pipeline, error) {
+	opts := &gitlab.ListProjectPipelinesOptions{
 		ListOptions: gitlab.ListOptions{PerPage: 20},
 		Ref:         gitlab.Ptr(ref),
 		OrderBy:     gitlab.Ptr("updated_at"),
 		Sort:        gitlab.Ptr("desc"),
-	})
+	}
+	if !createdAfter.IsZero() {
+		opts.CreatedAfter = gitlab.Ptr(createdAfter)
+	}
+	return c.listPipelines(ctx, projectID, opts)
 }
 
 func (c *Client) listPipelines(ctx context.Context, projectID int, opts *gitlab.ListProjectPipelinesOptions) ([]Pipeline, error) {

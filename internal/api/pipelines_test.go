@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 )
 
 func TestListPipelines_ParsesStatusAndRef(t *testing.T) {
@@ -15,7 +16,7 @@ func TestListPipelines_ParsesStatusAndRef(t *testing.T) {
 		fmt.Fprint(w, `[{"id": 10, "iid": 1, "project_id": 1, "status": "running", "ref": "main", "sha": "abc123", "web_url": "https://x/1"}]`)
 	})
 
-	pipelines, err := client.ListPipelines(context.Background(), 1)
+	pipelines, err := client.ListPipelines(context.Background(), 1, time.Time{})
 	if err != nil {
 		t.Fatalf("ListPipelines returned error: %v", err)
 	}
@@ -40,12 +41,66 @@ func TestListPipelinesByRef_SendsRefFilter(t *testing.T) {
 		fmt.Fprint(w, `[{"id": 20, "project_id": 1, "status": "success", "ref": "feature/login-fix", "sha": "def456"}]`)
 	})
 
-	pipelines, err := client.ListPipelinesByRef(context.Background(), 1, "feature/login-fix")
+	pipelines, err := client.ListPipelinesByRef(context.Background(), 1, "feature/login-fix", time.Time{})
 	if err != nil {
 		t.Fatalf("ListPipelinesByRef returned error: %v", err)
 	}
 	if len(pipelines) != 1 || pipelines[0].Ref != "feature/login-fix" {
 		t.Fatalf("unexpected pipelines: %+v", pipelines)
+	}
+}
+
+// TestListPipelines_SendsCreatedAfterWhenSet covers the user request for a
+// configurable pipeline age cap: when a non-zero cutoff is passed,
+// created_after must be sent to GitLab so the filtering happens
+// server-side (fewer results over the wire), not just client-side hiding
+// after the fact.
+func TestListPipelines_SendsCreatedAfterWhenSet(t *testing.T) {
+	mux, client := setup(t)
+	cutoff := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	mux.HandleFunc("/api/v4/projects/1/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		got := r.URL.Query().Get("created_after")
+		if got == "" {
+			t.Error("expected created_after query param to be set")
+		}
+		fmt.Fprint(w, `[]`)
+	})
+
+	if _, err := client.ListPipelines(context.Background(), 1, cutoff); err != nil {
+		t.Fatalf("ListPipelines returned error: %v", err)
+	}
+}
+
+// TestListPipelines_OmitsCreatedAfterWhenZero covers the "no cap
+// configured" default: the zero time.Time must not be sent as a filter at
+// all (which GitLab would likely reject or misinterpret), preserving
+// today's unfiltered behavior for anyone who hasn't opted in.
+func TestListPipelines_OmitsCreatedAfterWhenZero(t *testing.T) {
+	mux, client := setup(t)
+	mux.HandleFunc("/api/v4/projects/1/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("created_after"); got != "" {
+			t.Errorf("expected no created_after param, got %q", got)
+		}
+		fmt.Fprint(w, `[]`)
+	})
+
+	if _, err := client.ListPipelines(context.Background(), 1, time.Time{}); err != nil {
+		t.Fatalf("ListPipelines returned error: %v", err)
+	}
+}
+
+func TestListPipelinesByRef_SendsCreatedAfterWhenSet(t *testing.T) {
+	mux, client := setup(t)
+	cutoff := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	mux.HandleFunc("/api/v4/projects/1/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("created_after"); got == "" {
+			t.Error("expected created_after query param to be set")
+		}
+		fmt.Fprint(w, `[]`)
+	})
+
+	if _, err := client.ListPipelinesByRef(context.Background(), 1, "main", cutoff); err != nil {
+		t.Fatalf("ListPipelinesByRef returned error: %v", err)
 	}
 }
 
