@@ -71,6 +71,16 @@ type refsLoadedMsg struct {
 	err       error
 }
 
+// refPickerLoadedMsg carries branches+tags for the ref picker inside the
+// pipeline trigger modal — distinct from refsLoadedMsg (tags only, for the
+// "lock to latest tag" flow on the explorer).
+type refPickerLoadedMsg struct {
+	reqID     reqID
+	projectID int
+	refs      []api.Ref
+	err       error
+}
+
 // blobSearchResultsMsg carries blob search hits.
 type blobSearchResultsMsg struct {
 	reqID reqID

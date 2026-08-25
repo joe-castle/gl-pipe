@@ -77,6 +77,16 @@ type Model struct {
 	mrsPending int
 	mrsErrored int
 
+	// refsPending/refsErrored/refsLocked/refsSkipped track a "lock to
+	// latest tag" batch (T on the explorer, across staged/highlighted
+	// projects), same completion-summary pattern as the pipeline and MR
+	// batches. refsSkipped is a project with no semver tags at all —
+	// distinct from refsErrored (an actual API failure).
+	refsPending int
+	refsErrored int
+	refsLocked  int
+	refsSkipped int
+
 	statusMsg string
 	statusErr bool
 	loading   bool
@@ -91,6 +101,8 @@ type Model struct {
 	genGroups    reqID
 	genMRs       reqID
 	genBlob      reqID
+	genRefs      reqID
+	genRefPicker reqID
 
 	logCancel context.CancelFunc
 	logJobURL string
@@ -316,15 +328,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case refsLoadedMsg:
-		if msg.err != nil {
-			m.setErr(msg.err)
+		if msg.reqID != m.genRefs {
 			return m, nil
 		}
-		if ref, ok := api.LatestSemVerTag(msg.refs); ok {
-			m.projectList.LockedRef[msg.projectID] = ref.Name
-			m.setStatus("locked " + m.projectNames[msg.projectID] + " to " + ref.Name)
+		if msg.err != nil {
+			m.refsErrored++
+		} else if ref, ok := api.LatestSemVerTag(msg.refs); ok {
+			m.projectList.SetLockedRef(msg.projectID, ref.Name)
+			m.refsLocked++
 		} else {
-			m.setStatus("no semver tags found for " + m.projectNames[msg.projectID])
+			m.refsSkipped++
+		}
+		if m.refsPending > 0 {
+			m.refsPending--
+		}
+		if m.refsPending == 0 {
+			m.loading = false
+			summary := fmt.Sprintf("locked %d project(s) to latest tag", m.refsLocked)
+			if m.refsSkipped > 0 {
+				summary += fmt.Sprintf(", %d with no semver tags", m.refsSkipped)
+			}
+			if m.refsErrored > 0 {
+				summary += fmt.Sprintf(", %d failed", m.refsErrored)
+			}
+			m.setStatus(summary)
 		}
 		return m, nil
 
@@ -385,6 +412,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case refSearchSubmitMsg:
 		return m.searchPipelinesByRef(msg.ref)
+
+	case components.RefPickerRequestMsg:
+		if msg.ProjectID == 0 {
+			m.setStatus("no project staged to browse refs for")
+			return m, nil
+		}
+		id := m.newReqID()
+		m.genRefPicker = id
+		return m, loadAllRefsCmd(m.ctx, m.client, msg.ProjectID, id)
+
+	case refPickerLoadedMsg:
+		if msg.reqID != m.genRefPicker {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.setErr(msg.err)
+			return m, nil
+		}
+		m.variables.OpenRefPicker(msg.refs)
+		return m, nil
 
 	case components.DispatchMsg:
 		return m.dispatchBatch(msg)

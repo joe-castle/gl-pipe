@@ -85,6 +85,59 @@ func TestVariables_DispatchEmitsProjectsRefAndVars(t *testing.T) {
 	}
 }
 
+func TestVariables_CtrlREmitsRefPickerRequestForFirstProject(t *testing.T) {
+	v := NewVariables()
+	v.Open([]api.Project{{ID: 42}, {ID: 43}}, "main", nil)
+
+	_, cmd := v.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	if cmd == nil {
+		t.Fatal("expected a RefPickerRequestMsg cmd")
+	}
+	msg, ok := cmd().(RefPickerRequestMsg)
+	if !ok {
+		t.Fatalf("expected RefPickerRequestMsg, got %T", msg)
+	}
+	if msg.ProjectID != 42 {
+		t.Fatalf("expected the first staged project's ID, got %d", msg.ProjectID)
+	}
+}
+
+func TestVariables_OpenRefPickerThenSelectSetsRef(t *testing.T) {
+	v := NewVariables()
+	v.Open([]api.Project{{ID: 1}}, "main", nil)
+	v.OpenRefPicker([]api.Ref{
+		{Name: "main", IsTag: false},
+		{Name: "v1.2.3", IsTag: true},
+	})
+
+	updated, _ := v.Update(runeKey('j')) // move to v1.2.3
+	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if updated.refPickerActive {
+		t.Fatal("expected the picker to close after selecting")
+	}
+	if updated.Ref != "v1.2.3" {
+		t.Fatalf("expected Ref set to the selected ref, got %q", updated.Ref)
+	}
+	if updated.RefInput.Value() != "v1.2.3" {
+		t.Fatalf("expected RefInput updated too, got %q", updated.RefInput.Value())
+	}
+}
+
+func TestVariables_RefPickerEscCancelsWithoutChangingRef(t *testing.T) {
+	v := NewVariables()
+	v.Open([]api.Project{{ID: 1}}, "main", nil)
+	v.OpenRefPicker([]api.Ref{{Name: "other-branch"}})
+
+	updated, _ := v.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if updated.refPickerActive {
+		t.Fatal("expected esc to close the picker")
+	}
+	if updated.Ref != "main" {
+		t.Fatalf("expected Ref unchanged by esc, got %q", updated.Ref)
+	}
+}
+
 func TestVariables_EscClosesWithoutDispatching(t *testing.T) {
 	v := NewVariables()
 	v.Open([]api.Project{{ID: 1}}, "main", nil)

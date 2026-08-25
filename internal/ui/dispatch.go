@@ -76,11 +76,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "T":
 			if !textFocused {
-				if proj, ok := m.projectList.Highlighted(); ok {
-					id := m.newReqID()
-					return m, loadRefsCmd(m.ctx, m.client, proj.ID, id)
-				}
-				return m, nil
+				return m.toggleLockLatestTag()
 			}
 		case "enter":
 			if !textFocused {
@@ -315,6 +311,47 @@ func (m Model) openMRsForSelected() (tea.Model, tea.Cmd) {
 	cmds := make([]tea.Cmd, 0, len(projects))
 	for _, proj := range projects {
 		cmds = append(cmds, loadProjectMRsCmd(m.ctx, m.client, proj.ID, id))
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// toggleLockLatestTag is T on the explorer: lock the staged (or
+// highlighted-fallback) project(s) to their latest SemVer tag, same
+// "staged, or highlighted" convention as every other batch action. If
+// every targeted project is already locked, it unlocks them all instead —
+// the same toggle-based semantics as 'a' (select all).
+func (m Model) toggleLockLatestTag() (tea.Model, tea.Cmd) {
+	projects := m.projectList.SelectedProjects()
+	if len(projects) == 0 {
+		return m, nil
+	}
+
+	allLocked := true
+	for _, proj := range projects {
+		if _, ok := m.projectList.LockedRef[proj.ID]; !ok {
+			allLocked = false
+			break
+		}
+	}
+	if allLocked {
+		for _, proj := range projects {
+			m.projectList.ClearLockedRef(proj.ID)
+		}
+		m.setStatus(fmt.Sprintf("unlocked %d project(s)", len(projects)))
+		return m, nil
+	}
+
+	id := m.newReqID()
+	m.genRefs = id
+	m.loading = true
+	m.refsPending = len(projects)
+	m.refsErrored = 0
+	m.refsLocked = 0
+	m.refsSkipped = 0
+
+	cmds := make([]tea.Cmd, 0, len(projects))
+	for _, proj := range projects {
+		cmds = append(cmds, loadRefsCmd(m.ctx, m.client, proj.ID, id))
 	}
 	return m, tea.Batch(cmds...)
 }

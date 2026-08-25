@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,6 +141,45 @@ func TestUpdate_BlobSearchResultsDropsStaleResponse(t *testing.T) {
 	}
 }
 
+// TestUpdate_RefPickerRequestFiresLoadAndOpensPicker covers the full
+// round trip: Variables emits RefPickerRequestMsg, the model fires
+// loadAllRefsCmd, and the resulting refPickerLoadedMsg opens the picker
+// with the fetched refs.
+func TestUpdate_RefPickerRequestFiresLoadAndOpensPicker(t *testing.T) {
+	m := newTestModel(t)
+	m.variables.Open([]api.Project{{ID: 7}}, "main", nil)
+
+	updated, cmd := m.Update(components.RefPickerRequestMsg{ProjectID: 7})
+	mm := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a Cmd fetching branches+tags")
+	}
+	if mm.genRefPicker == 0 {
+		t.Fatal("expected genRefPicker to be set")
+	}
+
+	updated, _ = mm.Update(refPickerLoadedMsg{
+		reqID: mm.genRefPicker, projectID: 7,
+		refs: []api.Ref{{Name: "main"}, {Name: "v1.0.0", IsTag: true}},
+	})
+	mm = updated.(Model)
+	if !strings.Contains(mm.variables.View(), "v1.0.0") {
+		t.Fatalf("expected the fetched refs to appear in the picker view, got:\n%s", mm.variables.View())
+	}
+}
+
+func TestUpdate_RefPickerRequestWithNoProjectShowsStatus(t *testing.T) {
+	m := newTestModel(t)
+	updated, cmd := m.Update(components.RefPickerRequestMsg{ProjectID: 0})
+	mm := updated.(Model)
+	if cmd != nil {
+		t.Fatal("expected no fetch Cmd when there's no project to browse refs for")
+	}
+	if mm.statusMsg == "" {
+		t.Fatal("expected a status message explaining why nothing happened")
+	}
+}
+
 func TestHandleLeaderAction_BOpensRefSearch(t *testing.T) {
 	m := newTestModel(t)
 	updated, _ := m.Update(components.LeaderActionMsg{Key: "b"})
@@ -158,6 +198,66 @@ func TestHandleLeaderAction_MTriggersMyMRsLoad(t *testing.T) {
 	}
 	if mm.genMRs == 0 {
 		t.Fatal("expected genMRs to be set")
+	}
+}
+
+// TestHandleKey_CapitalTLocksStagedProjectsToLatestTag is a regression
+// test both for "T does nothing visible" (LockedRef used to be mutated
+// directly, bypassing the table's row re-sync) and for the new
+// staged-projects batch behavior.
+func TestHandleKey_CapitalTLocksStagedProjectsToLatestTag(t *testing.T) {
+	m := newTestModel(t)
+	m.projectList.SetProjects([]api.Project{
+		{ID: 10, PathWithNamespace: "a/b"},
+		{ID: 11, PathWithNamespace: "c/d"},
+	})
+	m.projectList.Selected[10] = true
+	m.projectList.Selected[11] = true
+
+	updated, cmd := m.Update(runeKey('T'))
+	mm := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a Cmd batch loading tags for the staged projects")
+	}
+	if mm.refsPending != 2 {
+		t.Fatalf("expected both staged projects queried, got refsPending=%d", mm.refsPending)
+	}
+
+	updated, _ = mm.Update(refsLoadedMsg{
+		reqID: mm.genRefs, projectID: 10,
+		refs: []api.Ref{{Name: "v1.2.3", IsTag: true}},
+	})
+	mm = updated.(Model)
+	updated, _ = mm.Update(refsLoadedMsg{
+		reqID: mm.genRefs, projectID: 11,
+		refs: []api.Ref{{Name: "v2.0.0", IsTag: true}},
+	})
+	mm = updated.(Model)
+
+	if mm.projectList.LockedRef[10] != "v1.2.3" || mm.projectList.LockedRef[11] != "v2.0.0" {
+		t.Fatalf("expected both projects locked to their latest tag, got %+v", mm.projectList.LockedRef)
+	}
+	// The regression this guards: the Ref column must actually reflect it.
+	if !strings.Contains(mm.projectList.View(), "v1.2.3") || !strings.Contains(mm.projectList.View(), "v2.0.0") {
+		t.Fatalf("expected locked tags visible in the rendered view, got:\n%s", mm.projectList.View())
+	}
+}
+
+// TestHandleKey_CapitalTUnlocksWhenAllStagedAlreadyLocked covers the
+// toggle half: pressing T again when everything targeted is already
+// locked unlocks it instead of re-fetching.
+func TestHandleKey_CapitalTUnlocksWhenAllStagedAlreadyLocked(t *testing.T) {
+	m := newTestModel(t)
+	m.projectList.SetProjects([]api.Project{{ID: 10, PathWithNamespace: "a/b"}})
+	m.projectList.SetLockedRef(10, "v1.0.0")
+
+	updated, cmd := m.Update(runeKey('T'))
+	mm := updated.(Model)
+	if cmd != nil {
+		t.Fatal("expected no fetch Cmd when unlocking (no network call needed)")
+	}
+	if _, ok := mm.projectList.LockedRef[10]; ok {
+		t.Fatalf("expected project 10 unlocked, got LockedRef=%+v", mm.projectList.LockedRef)
 	}
 }
 

@@ -107,6 +107,26 @@ func loadRefsCmd(ctx context.Context, client *api.Client, projectID int, id reqI
 	}
 }
 
+// loadAllRefsCmd fetches both branches and tags for the ref picker inside
+// the trigger modal — unlike loadRefsCmd (tags only, for the "lock to
+// latest tag" flow), triggering a pipeline can target either kind of ref.
+func loadAllRefsCmd(ctx context.Context, client *api.Client, projectID int, id reqID) tea.Cmd {
+	return func() tea.Msg {
+		branches, err := client.ListBranches(ctx, projectID)
+		if err != nil {
+			return refPickerLoadedMsg{reqID: id, projectID: projectID, err: err}
+		}
+		tags, err := client.ListTags(ctx, projectID)
+		if err != nil {
+			return refPickerLoadedMsg{reqID: id, projectID: projectID, err: err}
+		}
+		refs := make([]api.Ref, 0, len(branches)+len(tags))
+		refs = append(refs, branches...)
+		refs = append(refs, tags...)
+		return refPickerLoadedMsg{reqID: id, projectID: projectID, refs: refs}
+	}
+}
+
 func createPipelineCmd(ctx context.Context, client *api.Client, projectID int, ref string, vars []api.Variable, id reqID) tea.Cmd {
 	return func() tea.Msg {
 		p, err := client.CreatePipeline(ctx, projectID, ref, vars)

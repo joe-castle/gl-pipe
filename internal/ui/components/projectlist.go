@@ -149,6 +149,26 @@ func (p *ProjectList) SelectedProjects() []api.Project {
 	return out
 }
 
+// SetLockedRef pins a project's ref and re-syncs the table so the Ref
+// column reflects it immediately. LockedRef is exported and was previously
+// mutated directly from the root model — which updated the underlying map
+// but never rebuilt the table's cached row strings, so the Ref column
+// silently never changed on screen even though the lock genuinely took.
+func (p *ProjectList) SetLockedRef(projectID int, ref string) {
+	if p.LockedRef == nil {
+		p.LockedRef = map[int]string{}
+	}
+	p.LockedRef[projectID] = ref
+	p.syncRows()
+}
+
+// ClearLockedRef removes a project's pinned ref (back to "(default)"),
+// re-syncing the table the same way SetLockedRef does.
+func (p *ProjectList) ClearLockedRef(projectID int) {
+	delete(p.LockedRef, projectID)
+	p.syncRows()
+}
+
 func (p *ProjectList) SetSize(w, h int) {
 	p.width, p.height = w, h
 	const checkW, refW = 3, 20

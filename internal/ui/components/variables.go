@@ -19,6 +19,13 @@ type DispatchMsg struct {
 	Vars     []api.Variable
 }
 
+// RefPickerRequestMsg is emitted when the user asks to browse available
+// refs (ctrl+r) — the root model fetches branches+tags for the first
+// staged project and calls OpenRefPicker with the result.
+type RefPickerRequestMsg struct {
+	ProjectID int
+}
+
 type varEditState int
 
 const (
@@ -43,6 +50,10 @@ type Variables struct {
 	valueInput textinput.Model
 
 	focusRef bool
+
+	refPickerActive bool
+	refOptions      []api.Ref
+	refCursor       int
 }
 
 func NewVariables() Variables {
@@ -81,9 +92,29 @@ func (v *Variables) Open(projects []api.Project, ref string, preset []api.Variab
 	v.syncRows()
 	v.focusRef = false
 	v.editing = varEditNone
+	v.refPickerActive = false
 }
 
 func (v *Variables) Close() { v.Active = false }
+
+// FirstProjectID returns the first staged project's ID, or 0 if none —
+// the ref picker fetches branches/tags for this one project, since the
+// trigger modal shares a single ref field across every staged project
+// (see the "known simplifications" note in CLAUDE.md).
+func (v *Variables) FirstProjectID() int {
+	if len(v.Projects) == 0 {
+		return 0
+	}
+	return v.Projects[0].ID
+}
+
+// OpenRefPicker activates the ref browser overlay with a freshly-fetched
+// branch+tag list.
+func (v *Variables) OpenRefPicker(refs []api.Ref) {
+	v.refPickerActive = true
+	v.refOptions = refs
+	v.refCursor = 0
+}
 
 func (v *Variables) syncRows() {
 	rows := make([]table.Row, 0, len(v.rows)+1)
@@ -116,6 +147,9 @@ func (v Variables) isDispatchRow() bool {
 }
 
 func (v Variables) Update(msg tea.Msg) (Variables, tea.Cmd) {
+	if v.refPickerActive {
+		return v.updateRefPicker(msg)
+	}
 	if v.editing != varEditNone {
 		return v.updateEditing(msg)
 	}
@@ -125,6 +159,9 @@ func (v Variables) Update(msg tea.Msg) (Variables, tea.Cmd) {
 		case "esc":
 			v.Active = false
 			return v, nil
+		case "ctrl+r":
+			projectID := v.FirstProjectID()
+			return v, func() tea.Msg { return RefPickerRequestMsg{ProjectID: projectID} }
 		case "tab":
 			v.focusRef = !v.focusRef
 			if v.focusRef {
@@ -194,6 +231,32 @@ func (v Variables) Update(msg tea.Msg) (Variables, tea.Cmd) {
 	return v, cmd
 }
 
+func (v Variables) updateRefPicker(msg tea.Msg) (Variables, tea.Cmd) {
+	km, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return v, nil
+	}
+	switch km.String() {
+	case "esc":
+		v.refPickerActive = false
+	case "j", "down":
+		if v.refCursor < len(v.refOptions)-1 {
+			v.refCursor++
+		}
+	case "k", "up":
+		if v.refCursor > 0 {
+			v.refCursor--
+		}
+	case "enter":
+		if v.refCursor < len(v.refOptions) {
+			v.Ref = v.refOptions[v.refCursor].Name
+			v.RefInput.SetValue(v.Ref)
+		}
+		v.refPickerActive = false
+	}
+	return v, nil
+}
+
 func (v Variables) startEdit(field varEditState) Variables {
 	v.editing = field
 	i := v.table.Cursor()
@@ -240,6 +303,10 @@ func (v Variables) updateEditing(msg tea.Msg) (Variables, tea.Cmd) {
 }
 
 func (v Variables) View() string {
+	if v.refPickerActive {
+		return v.refPickerViewString()
+	}
+
 	var b string
 	b += v.RefInput.View() + "\n\n"
 	b += v.table.View() + "\n"
@@ -255,7 +322,33 @@ func (v Variables) View() string {
 		[2]string{"m", "masked"},
 		[2]string{"p", "protected"},
 		[2]string{"tab", "ref/rows"},
+		[2]string{"ctrl+r", "browse refs"},
 		[2]string{"enter", "edit/dispatch"},
+		[2]string{"esc", "cancel"},
+	)
+	return lipgloss.NewStyle().Render(b)
+}
+
+func (v Variables) refPickerViewString() string {
+	var b string
+	b += "Available refs (branches + tags):\n\n"
+	for i, r := range v.refOptions {
+		marker := "  "
+		if i == v.refCursor {
+			marker = "> "
+		}
+		kind := "branch"
+		if r.IsTag {
+			kind = "tag"
+		}
+		b += fmt.Sprintf("%s%s (%s)\n", marker, r.Name, kind)
+	}
+	if len(v.refOptions) == 0 {
+		b += "(no refs found)\n"
+	}
+	b += "\n" + RenderHelp(
+		[2]string{"j/k", "move"},
+		[2]string{"enter", "select"},
 		[2]string{"esc", "cancel"},
 	)
 	return lipgloss.NewStyle().Render(b)

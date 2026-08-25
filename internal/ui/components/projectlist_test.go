@@ -1,6 +1,7 @@
 package components
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -58,6 +59,27 @@ func TestProjectList_HighlightedRecoversAfterEmptyToNonEmpty(t *testing.T) {
 	proj, ok := p.Highlighted()
 	if !ok || proj.ID != 42 {
 		t.Fatalf("expected project 42 highlighted after going from empty to non-empty, got %+v ok=%v", proj, ok)
+	}
+}
+
+// TestProjectList_SetLockedRefUpdatesVisibleRefColumn is a regression test:
+// LockedRef used to be mutated directly from the root model (a plain map
+// write on an exported field), which updated the data but never rebuilt
+// the table's cached row strings — so the Ref column never visibly
+// changed on screen even though the lock had genuinely taken. SetLockedRef/
+// ClearLockedRef fix this by re-syncing rows as part of the mutation.
+func TestProjectList_SetLockedRefUpdatesVisibleRefColumn(t *testing.T) {
+	p := NewProjectList()
+	p.SetProjects([]api.Project{{ID: 1, PathWithNamespace: "a/b"}})
+
+	p.SetLockedRef(1, "v2.3.4")
+	if !strings.Contains(p.View(), "v2.3.4") {
+		t.Fatalf("expected the locked ref visible in the rendered view, got:\n%s", p.View())
+	}
+
+	p.ClearLockedRef(1)
+	if strings.Contains(p.View(), "v2.3.4") {
+		t.Fatalf("expected the ref cleared from the rendered view, got:\n%s", p.View())
 	}
 }
 
