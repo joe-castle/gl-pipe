@@ -114,10 +114,13 @@ The project explorer only syncs projects from an instance's `default_groups` —
 | `a` | Stage/unstage all — respects the current `/` filter |
 | `T` | Lock the staged (or highlighted) project(s) to their latest SemVer tag — press again to unlock any of them that are currently locked |
 | `t` | Same as `T`, but locks to the most recently *created* tag instead of the highest SemVer — for repos that don't tag with version numbers |
+| `Ctrl+r` | Browse available refs (branches + tags) for the staged (or highlighted) project(s) and lock them all to whichever one you pick |
 | `Enter` | View pipelines for the staged (`x`) projects together, or just the highlighted one if none are staged |
 | `M` | Open merge requests for the staged (or highlighted) project(s) |
 
 To lock every project matching a filter to its latest tag: `/` to filter, `a` to stage all of them, `T` (SemVer) or `t` (most recently created) to lock. Pressing the same key again unlocks — it targets whatever in the batch is currently locked, so one project with no qualifying tag (left on its default ref) won't block unlocking the rest.
+
+`Ctrl+r` covers the case those two can't: an arbitrary ref, or a ref that isn't "latest" by either definition. It fetches branches+tags for the first staged (or highlighted) project and applies your pick to every project in the batch — so a common flow is `T` to lock most of a group to its latest tag, then stage just the few that need something else and `Ctrl+r` to point them at a specific branch or hotfix tag instead. Triggering a pipeline (`<Space> p`) already honors whatever's locked here, same as `T`/`t`.
 
 #### Filter syntax
 

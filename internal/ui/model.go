@@ -56,6 +56,16 @@ func (s refLockStrategy) label() string {
 	return "latest SemVer tag"
 }
 
+// refPickerSource says which ctrl+r flow an in-flight ref-picker fetch
+// belongs to — the trigger modal and the explorer both open the same
+// underlying overlay pattern but for different components.
+type refPickerSource int
+
+const (
+	refPickerForTrigger  refPickerSource = iota // trigger modal: pick the ref to dispatch with
+	refPickerForExplorer                        // explorer: override a project's locked ref
+)
+
 // Model is gl-pipe's root Bubbletea model.
 type Model struct {
 	ctx    context.Context
@@ -110,6 +120,13 @@ type Model struct {
 	refsLocked  int
 	refsSkipped int
 	refLockMode refLockStrategy // which strategy the in-flight refsPending batch is using
+
+	// refPickerFor disambiguates who an in-flight genRefPicker fetch is
+	// for: the trigger modal's "pick the ref to dispatch with" (ctrl+r
+	// there) and the explorer's "override this project's locked ref"
+	// (ctrl+r here) both use loadAllRefsCmd/refPickerLoadedMsg, but the
+	// result has to open a different overlay depending on which asked.
+	refPickerFor refPickerSource
 
 	statusMsg string
 	statusErr bool
@@ -497,6 +514,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		id := m.newReqID()
 		m.genRefPicker = id
+		m.refPickerFor = refPickerForTrigger
 		return m, loadAllRefsCmd(m.ctx, m.client, msg.ProjectID, id)
 
 	case refPickerLoadedMsg:
@@ -507,7 +525,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setErr(msg.err)
 			return m, nil
 		}
-		m.variables.OpenRefPicker(msg.refs)
+		if m.refPickerFor == refPickerForExplorer {
+			m.projectList.OpenRefOverridePicker(msg.refs)
+		} else {
+			m.variables.OpenRefPicker(msg.refs)
+		}
 		return m, nil
 
 	case components.DispatchMsg:

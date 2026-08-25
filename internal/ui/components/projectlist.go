@@ -31,6 +31,7 @@ const (
 	modeBrowse projectListMode = iota
 	modeFilter
 	modeBlobSearch
+	modeRefPicker
 )
 
 // ProjectList is the fuzzy project explorer: multi-select, `/`-filter, and
@@ -51,6 +52,9 @@ type ProjectList struct {
 	DefaultGroup string
 
 	BlobHits []api.BlobHit
+
+	refPicker       refPicker
+	refPickerTarget []int // project IDs the open ref picker's selection will be applied to
 
 	width, height int
 }
@@ -181,10 +185,29 @@ func (p *ProjectList) SetSize(w, h int) {
 	p.table.SetHeight(h - 4)
 }
 
-// HasTextFocus reports whether a text input currently owns keystrokes, so
-// the root model knows not to steal <Space> for the leader menu.
+// HasTextFocus reports whether some overlay owns keystrokes right now, so
+// the root model knows not to steal <Space> for the leader menu — true for
+// any non-browse mode, not just the text-input ones (the ref picker takes
+// j/k/enter/esc, not text, but <Space> still shouldn't escape it).
 func (p *ProjectList) HasTextFocus() bool {
-	return p.mode == modeFilter || p.mode == modeBlobSearch
+	return p.mode != modeBrowse
+}
+
+// PrepareRefOverride records which projects a ref-picker selection will
+// apply to, ahead of the async fetch that supplies the ref list itself
+// (OpenRefOverridePicker) — mirrors the "staged, or highlighted" batch
+// convention used everywhere else, so overriding several staged projects
+// to the same ref works in one pick, same as T/t.
+func (p *ProjectList) PrepareRefOverride(projectIDs []int) {
+	p.refPickerTarget = projectIDs
+}
+
+// OpenRefOverridePicker activates the ref browser overlay with a
+// freshly-fetched branch+tag list; selecting one locks every project
+// recorded by PrepareRefOverride to it.
+func (p *ProjectList) OpenRefOverridePicker(refs []api.Ref) {
+	p.mode = modeRefPicker
+	p.refPicker.Open(refs)
 }
 
 // OpenBlobSearch activates the blob-search overlay. Group starts prefilled
@@ -210,9 +233,26 @@ func (p ProjectList) Update(msg tea.Msg) (ProjectList, tea.Cmd) {
 		return p.updateBlobSearch(msg)
 	case modeFilter:
 		return p.updateFilter(msg)
+	case modeRefPicker:
+		return p.updateRefPicker(msg)
 	default:
 		return p.updateBrowse(msg)
 	}
+}
+
+func (p ProjectList) updateRefPicker(msg tea.Msg) (ProjectList, tea.Cmd) {
+	var selected bool
+	var ref api.Ref
+	p.refPicker, selected, ref = p.refPicker.update(msg)
+	if !p.refPicker.active {
+		p.mode = modeBrowse
+	}
+	if selected {
+		for _, id := range p.refPickerTarget {
+			p.SetLockedRef(id, ref.Name)
+		}
+	}
+	return p, nil
 }
 
 func (p ProjectList) updateBlobSearch(msg tea.Msg) (ProjectList, tea.Cmd) {
@@ -301,6 +341,10 @@ func (p ProjectList) updateBrowse(msg tea.Msg) (ProjectList, tea.Cmd) {
 }
 
 func (p ProjectList) View() string {
+	if p.mode == modeRefPicker {
+		return p.refPicker.viewString()
+	}
+
 	var b strings.Builder
 	if p.mode == modeFilter {
 		b.WriteString(p.filterInput.View() + "\n")
@@ -331,6 +375,7 @@ func (p ProjectList) View() string {
 			[2]string{"x", "stage"},
 			[2]string{"a", "stage/unstage all"},
 			[2]string{"T", "lock latest tag"},
+			[2]string{"ctrl+r", "override ref"},
 			[2]string{"enter", "view pipelines"},
 			[2]string{"M", "view MRs"},
 		))

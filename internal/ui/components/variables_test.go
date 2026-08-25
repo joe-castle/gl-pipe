@@ -113,7 +113,7 @@ func TestVariables_OpenRefPickerThenSelectSetsRef(t *testing.T) {
 	updated, _ := v.Update(runeKey('j')) // move to v1.2.3
 	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
-	if updated.refPickerActive {
+	if updated.refPicker.active {
 		t.Fatal("expected the picker to close after selecting")
 	}
 	if updated.Ref != "v1.2.3" {
@@ -130,7 +130,7 @@ func TestVariables_RefPickerEscCancelsWithoutChangingRef(t *testing.T) {
 	v.OpenRefPicker([]api.Ref{{Name: "other-branch"}})
 
 	updated, _ := v.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	if updated.refPickerActive {
+	if updated.refPicker.active {
 		t.Fatal("expected esc to close the picker")
 	}
 	if updated.Ref != "main" {

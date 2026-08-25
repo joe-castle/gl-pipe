@@ -271,3 +271,57 @@ func TestProjectList_BlobSearchOpenPrefillsDefaultGroup(t *testing.T) {
 		t.Fatalf("got Group=%q Query=%q", msg.Group, msg.Query)
 	}
 }
+
+// TestProjectList_RefOverrideAppliesToEveryPreparedTarget covers the
+// per-project ref override: PrepareRefOverride records the batch (staged,
+// or highlighted fallback — set by the caller, mirroring T/t), then
+// OpenRefOverridePicker + a selection locks every one of them to the
+// chosen ref in a single pick.
+func TestProjectList_RefOverrideAppliesToEveryPreparedTarget(t *testing.T) {
+	p := NewProjectList()
+	p.SetProjects([]api.Project{
+		{ID: 10, PathWithNamespace: "a/b"},
+		{ID: 11, PathWithNamespace: "c/d"},
+	})
+	p.PrepareRefOverride([]int{10, 11})
+	p.OpenRefOverridePicker([]api.Ref{
+		{Name: "main", IsTag: false},
+		{Name: "hotfix/urgent", IsTag: false},
+	})
+
+	updated, _ := p.Update(runeKey('j')) // move to hotfix/urgent
+	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if updated.LockedRef[10] != "hotfix/urgent" || updated.LockedRef[11] != "hotfix/urgent" {
+		t.Fatalf("expected both targets locked to hotfix/urgent, got %+v", updated.LockedRef)
+	}
+	if updated.mode != modeBrowse {
+		t.Fatalf("expected picker to close back to browse mode, got mode=%v", updated.mode)
+	}
+}
+
+func TestProjectList_RefOverrideEscCancelsWithoutLocking(t *testing.T) {
+	p := NewProjectList()
+	p.SetProjects([]api.Project{{ID: 10, PathWithNamespace: "a/b"}})
+	p.PrepareRefOverride([]int{10})
+	p.OpenRefOverridePicker([]api.Ref{{Name: "main"}})
+
+	updated, _ := p.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if _, ok := updated.LockedRef[10]; ok {
+		t.Fatalf("expected no lock after esc, got %+v", updated.LockedRef)
+	}
+	if updated.mode != modeBrowse {
+		t.Fatalf("expected esc to return to browse mode, got mode=%v", updated.mode)
+	}
+}
+
+// TestProjectList_HasTextFocusDuringRefPicker: <Space> must not escape the
+// picker to open the leader menu, even though the picker takes j/k/enter,
+// not literal text.
+func TestProjectList_HasTextFocusDuringRefPicker(t *testing.T) {
+	p := NewProjectList()
+	p.OpenRefOverridePicker([]api.Ref{{Name: "main"}})
+	if !p.HasTextFocus() {
+		t.Fatal("expected HasTextFocus true while the ref picker overlay is open")
+	}
+}

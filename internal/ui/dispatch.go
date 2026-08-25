@@ -90,6 +90,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if !textFocused {
 				return m.openMRsForSelected()
 			}
+		case "ctrl+r":
+			if !textFocused {
+				return m.openExplorerRefPicker()
+			}
 		}
 		var cmd tea.Cmd
 		m.projectList, cmd = m.projectList.Update(msg)
@@ -368,6 +372,30 @@ func (m Model) toggleLockRef(strategy refLockStrategy) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, loadRefsCmd(m.ctx, m.client, proj.ID, id))
 	}
 	return m, tea.Batch(cmds...)
+}
+
+// openExplorerRefPicker browses branches+tags for the first staged (or
+// highlighted) project and lets the user pick one to lock every targeted
+// project to — same "staged, or highlighted" batch convention as T/t, but
+// for an arbitrary ref instead of "whatever's latest": e.g. lock most
+// projects to a SemVer tag via T, then stage the few that need a specific
+// branch/tag instead and override just those with ctrl+r.
+func (m Model) openExplorerRefPicker() (tea.Model, tea.Cmd) {
+	projects := m.projectList.SelectedProjects()
+	if len(projects) == 0 {
+		m.setStatus("no project selected — highlight or x-select one first")
+		return m, nil
+	}
+	ids := make([]int, len(projects))
+	for i, proj := range projects {
+		ids[i] = proj.ID
+	}
+	m.projectList.PrepareRefOverride(ids)
+
+	id := m.newReqID()
+	m.genRefPicker = id
+	m.refPickerFor = refPickerForExplorer
+	return m, loadAllRefsCmd(m.ctx, m.client, projects[0].ID, id)
 }
 
 // openJobsForPipelines shows job matrices for one or more pipelines

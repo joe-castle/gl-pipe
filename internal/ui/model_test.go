@@ -180,6 +180,61 @@ func TestUpdate_RefPickerRequestWithNoProjectShowsStatus(t *testing.T) {
 	}
 }
 
+// TestHandleKey_CtrlROpensExplorerRefOverride covers the explorer's own
+// ctrl+r: unlike the trigger modal's ctrl+r (which opens the picker inside
+// Variables), this one must route the fetched refs into ProjectList, and
+// must apply the chosen ref to every staged project, not just the first.
+func TestHandleKey_CtrlROpensExplorerRefOverride(t *testing.T) {
+	m := newTestModel(t)
+	m.projectList.SetProjects([]api.Project{
+		{ID: 10, PathWithNamespace: "a/b"},
+		{ID: 11, PathWithNamespace: "c/d"},
+	})
+	m.projectList.Selected[10] = true
+	m.projectList.Selected[11] = true
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	mm := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a Cmd fetching branches+tags for the first staged project")
+	}
+	if mm.genRefPicker == 0 {
+		t.Fatal("expected genRefPicker to be set")
+	}
+	if mm.refPickerFor != refPickerForExplorer {
+		t.Fatalf("expected refPickerFor=refPickerForExplorer, got %v", mm.refPickerFor)
+	}
+
+	updated, _ = mm.Update(refPickerLoadedMsg{
+		reqID: mm.genRefPicker, projectID: 10,
+		refs: []api.Ref{{Name: "main"}, {Name: "hotfix/urgent"}},
+	})
+	mm = updated.(Model)
+
+	// The trigger modal must NOT have been touched by this flow.
+	if mm.variables.Active {
+		t.Fatal("explorer ctrl+r should not open the trigger modal's picker")
+	}
+
+	pl, _ := mm.projectList.Update(runeKey('j')) // move to hotfix/urgent
+	pl, _ = pl.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if pl.LockedRef[10] != "hotfix/urgent" || pl.LockedRef[11] != "hotfix/urgent" {
+		t.Fatalf("expected both staged projects locked to hotfix/urgent, got %+v", pl.LockedRef)
+	}
+}
+
+func TestHandleKey_CtrlRWithNoProjectSelectedShowsStatus(t *testing.T) {
+	m := newTestModel(t)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	mm := updated.(Model)
+	if cmd != nil {
+		t.Fatal("expected no fetch Cmd with nothing to target")
+	}
+	if mm.statusMsg == "" {
+		t.Fatal("expected a status message explaining why nothing happened")
+	}
+}
+
 func TestHandleLeaderAction_BOpensRefSearch(t *testing.T) {
 	m := newTestModel(t)
 	updated, _ := m.Update(components.LeaderActionMsg{Key: "b"})

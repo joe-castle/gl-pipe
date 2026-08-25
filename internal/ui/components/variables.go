@@ -51,9 +51,7 @@ type Variables struct {
 
 	focusRef bool
 
-	refPickerActive bool
-	refOptions      []api.Ref
-	refCursor       int
+	refPicker refPicker
 }
 
 func NewVariables() Variables {
@@ -92,7 +90,7 @@ func (v *Variables) Open(projects []api.Project, ref string, preset []api.Variab
 	v.syncRows()
 	v.focusRef = false
 	v.editing = varEditNone
-	v.refPickerActive = false
+	v.refPicker.active = false
 }
 
 func (v *Variables) Close() { v.Active = false }
@@ -111,9 +109,7 @@ func (v *Variables) FirstProjectID() int {
 // OpenRefPicker activates the ref browser overlay with a freshly-fetched
 // branch+tag list.
 func (v *Variables) OpenRefPicker(refs []api.Ref) {
-	v.refPickerActive = true
-	v.refOptions = refs
-	v.refCursor = 0
+	v.refPicker.Open(refs)
 }
 
 func (v *Variables) syncRows() {
@@ -147,7 +143,7 @@ func (v Variables) isDispatchRow() bool {
 }
 
 func (v Variables) Update(msg tea.Msg) (Variables, tea.Cmd) {
-	if v.refPickerActive {
+	if v.refPicker.active {
 		return v.updateRefPicker(msg)
 	}
 	if v.editing != varEditNone {
@@ -232,27 +228,12 @@ func (v Variables) Update(msg tea.Msg) (Variables, tea.Cmd) {
 }
 
 func (v Variables) updateRefPicker(msg tea.Msg) (Variables, tea.Cmd) {
-	km, ok := msg.(tea.KeyMsg)
-	if !ok {
-		return v, nil
-	}
-	switch km.String() {
-	case "esc":
-		v.refPickerActive = false
-	case "j", "down":
-		if v.refCursor < len(v.refOptions)-1 {
-			v.refCursor++
-		}
-	case "k", "up":
-		if v.refCursor > 0 {
-			v.refCursor--
-		}
-	case "enter":
-		if v.refCursor < len(v.refOptions) {
-			v.Ref = v.refOptions[v.refCursor].Name
-			v.RefInput.SetValue(v.Ref)
-		}
-		v.refPickerActive = false
+	var selected bool
+	var ref api.Ref
+	v.refPicker, selected, ref = v.refPicker.update(msg)
+	if selected {
+		v.Ref = ref.Name
+		v.RefInput.SetValue(v.Ref)
 	}
 	return v, nil
 }
@@ -303,8 +284,8 @@ func (v Variables) updateEditing(msg tea.Msg) (Variables, tea.Cmd) {
 }
 
 func (v Variables) View() string {
-	if v.refPickerActive {
-		return v.refPickerViewString()
+	if v.refPicker.active {
+		return v.refPicker.viewString()
 	}
 
 	var b string
@@ -324,31 +305,6 @@ func (v Variables) View() string {
 		[2]string{"tab", "ref/rows"},
 		[2]string{"ctrl+r", "browse refs"},
 		[2]string{"enter", "edit/dispatch"},
-		[2]string{"esc", "cancel"},
-	)
-	return lipgloss.NewStyle().Render(b)
-}
-
-func (v Variables) refPickerViewString() string {
-	var b string
-	b += "Available refs (branches + tags):\n\n"
-	for i, r := range v.refOptions {
-		marker := "  "
-		if i == v.refCursor {
-			marker = "> "
-		}
-		kind := "branch"
-		if r.IsTag {
-			kind = "tag"
-		}
-		b += fmt.Sprintf("%s%s (%s)\n", marker, r.Name, kind)
-	}
-	if len(v.refOptions) == 0 {
-		b += "(no refs found)\n"
-	}
-	b += "\n" + RenderHelp(
-		[2]string{"j/k", "move"},
-		[2]string{"enter", "select"},
 		[2]string{"esc", "cancel"},
 	)
 	return lipgloss.NewStyle().Render(b)
