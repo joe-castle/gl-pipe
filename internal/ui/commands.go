@@ -165,6 +165,18 @@ func pipelinesByRefCmd(ctx context.Context, client *api.Client, projectID int, r
 	}
 }
 
+// pipelineByIDCmd fetches one specific pipeline by ID and reports it
+// through the same pipelinesLoadedMsg as every other way of loading
+// pipelines into the matrix — used to jump from a trigger job to its
+// downstream pipeline (a fixed pipeline ID, not "every pipeline for a
+// project" like pipelinesForProjectCmd).
+func pipelineByIDCmd(ctx context.Context, client *api.Client, projectID, pipelineID int, id reqID) tea.Cmd {
+	return func() tea.Msg {
+		p, err := client.GetPipeline(ctx, projectID, pipelineID)
+		return pipelinesLoadedMsg{reqID: id, projectID: projectID, pipelines: []api.Pipeline{p}, err: err}
+	}
+}
+
 func pipelineDetailCmd(ctx context.Context, client *api.Client, projectID, pipelineID int, id reqID) tea.Cmd {
 	return func() tea.Msg {
 		p, err := client.GetPipeline(ctx, projectID, pipelineID)

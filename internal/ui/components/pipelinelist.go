@@ -27,6 +27,15 @@ type OpenLogsMsg struct {
 	JobID     int
 }
 
+// OpenDownstreamPipelineMsg asks the root model to load a trigger job's
+// downstream pipeline into the pipeline matrix — Enter on a bridge job
+// (which has no log to stream) instead of OpenLogsMsg. PipelineID is 0 if
+// the downstream pipeline hasn't been created yet.
+type OpenDownstreamPipelineMsg struct {
+	ProjectID  int
+	PipelineID int
+}
+
 // BulkPipelineActionMsg requests a retry or cancel across the selected (or
 // highlighted) pipelines. Retry is true for retry, false for cancel.
 type BulkPipelineActionMsg struct {
@@ -498,12 +507,28 @@ func (p *PipelineList) syncJobRows() {
 			j.Stage,
 			j.Name,
 			StatusIcon(j.Status),
-			j.RunnerTag,
+			jobRunnerCell(j),
 			retries,
 			formatDuration(j.Duration),
 		}
 	}
 	setRows(&p.jobTable, rows)
+}
+
+// jobRunnerCell renders the RUNNER column: the runner tag for a regular
+// job, or — for a pipeline trigger job (`trigger:`, e.g. a deploy step
+// that kicks off a downstream deployment pipeline) — where it points, so
+// the downstream pipeline is visible at a glance instead of not showing
+// up at all. GitLab reports trigger jobs with no downstream_pipeline yet
+// (still pending) distinctly from one that's already running.
+func jobRunnerCell(j api.Job) string {
+	if !j.IsBridge {
+		return j.RunnerTag
+	}
+	if j.DownstreamPipelineID == 0 {
+		return "→ (pending)"
+	}
+	return fmt.Sprintf("→ #%d %s", j.DownstreamPipelineIID, StatusIcon(j.DownstreamStatus))
 }
 
 // HighlightedJob returns the job under the cursor in job-matrix mode.
@@ -625,6 +650,11 @@ func (p PipelineList) Update(msg tea.Msg) (PipelineList, tea.Cmd) {
 				return p, nil
 			case "enter":
 				if j, ok := p.HighlightedJob(); ok {
+					if j.IsBridge {
+						return p, func() tea.Msg {
+							return OpenDownstreamPipelineMsg{ProjectID: j.DownstreamProjectID, PipelineID: j.DownstreamPipelineID}
+						}
+					}
 					return p, func() tea.Msg { return OpenLogsMsg{ProjectID: j.ProjectID, JobID: j.ID} }
 				}
 				return p, nil
@@ -668,7 +698,7 @@ func (p PipelineList) View() string {
 		help := "\n" + RenderHelp(
 			[2]string{"x", "stage"},
 			[2]string{"a", "stage/unstage all"},
-			[2]string{"enter", "view logs"},
+			[2]string{"enter", "view logs / downstream pipeline"},
 			[2]string{"R", "bulk retry"},
 			[2]string{"K", "bulk cancel"},
 			[2]string{"r", "refresh now"},

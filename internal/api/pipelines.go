@@ -141,6 +141,10 @@ func (c *Client) CancelPipeline(ctx context.Context, projectID, pipelineID int) 
 
 // ListJobs returns every job for a pipeline, with a client-computed retry
 // count per (stage, name) group since the API does not report it directly.
+// This includes pipeline trigger jobs (the `trigger:` keyword — e.g. a
+// deploy job that kicks off a downstream deployment pipeline): GitLab
+// reports those through a separate "bridges" endpoint rather than the
+// regular jobs list, so they'd otherwise silently never appear here.
 func (c *Client) ListJobs(ctx context.Context, projectID, pipelineID int) ([]Job, error) {
 	jobs, _, err := c.gl.Jobs.ListPipelineJobs(projectID, int64(pipelineID), &gitlab.ListJobsOptions{
 		ListOptions:    gitlab.ListOptions{PerPage: 100},
@@ -150,7 +154,14 @@ func (c *Client) ListJobs(ctx context.Context, projectID, pipelineID int) ([]Job
 		return nil, fmt.Errorf("listing jobs for pipeline %d in project %d: %w", pipelineID, projectID, err)
 	}
 
-	out := make([]Job, 0, len(jobs))
+	bridges, _, err := c.gl.Jobs.ListPipelineBridges(projectID, int64(pipelineID), &gitlab.ListJobsOptions{
+		ListOptions: gitlab.ListOptions{PerPage: 100},
+	}, gitlab.WithContext(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("listing trigger jobs for pipeline %d in project %d: %w", pipelineID, projectID, err)
+	}
+
+	out := make([]Job, 0, len(jobs)+len(bridges))
 	counted := map[string]int{}
 	for _, j := range jobs {
 		key := j.Stage + "/" + j.Name
@@ -168,6 +179,30 @@ func (c *Client) ListJobs(ctx context.Context, projectID, pipelineID int) ([]Job
 			WebURL:     j.WebURL,
 			Duration:   time.Duration(j.Duration * float64(time.Second)),
 		})
+	}
+	for _, b := range bridges {
+		key := b.Stage + "/" + b.Name
+		retry := counted[key]
+		counted[key]++
+		job := Job{
+			ID:         int(b.ID),
+			ProjectID:  projectID,
+			PipelineID: pipelineID,
+			Name:       b.Name,
+			Stage:      b.Stage,
+			Status:     PipelineStatus(b.Status),
+			RetryCount: retry,
+			WebURL:     b.WebURL,
+			Duration:   time.Duration(b.Duration * float64(time.Second)),
+			IsBridge:   true,
+		}
+		if b.DownstreamPipeline != nil {
+			job.DownstreamProjectID = int(b.DownstreamPipeline.ProjectID)
+			job.DownstreamPipelineID = int(b.DownstreamPipeline.ID)
+			job.DownstreamPipelineIID = int(b.DownstreamPipeline.IID)
+			job.DownstreamStatus = PipelineStatus(b.DownstreamPipeline.Status)
+		}
+		out = append(out, job)
 	}
 	return out, nil
 }

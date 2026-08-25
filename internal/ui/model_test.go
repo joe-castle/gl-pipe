@@ -745,6 +745,53 @@ func TestHandleKey_EnterOnStagedPipelinesShowsJobsForAll(t *testing.T) {
 	}
 }
 
+// TestUpdate_OpenDownstreamPipelineMsgFetchesAndShowsIt covers the
+// user-reported gap end to end: Enter on a deploy-trigger job must fetch
+// its downstream pipeline and drop it straight into the pipeline matrix,
+// same as every other way pipelines get loaded there.
+func TestUpdate_OpenDownstreamPipelineMsgFetchesAndShowsIt(t *testing.T) {
+	m := newTestModel(t)
+	m.pane = panePipelines
+
+	updated, cmd := m.Update(components.OpenDownstreamPipelineMsg{ProjectID: 20, PipelineID: 555})
+	mm := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a Cmd fetching the downstream pipeline")
+	}
+
+	updated, _ = mm.Update(pipelinesLoadedMsg{
+		reqID: mm.genPipelines, projectID: 20,
+		pipelines: []api.Pipeline{{ID: 555, ProjectID: 20, IID: 42}},
+	})
+	mm = updated.(Model)
+
+	if mm.pane != panePipelines {
+		t.Fatalf("expected pane=panePipelines, got %v", mm.pane)
+	}
+	if mm.pipelineList.InJobs() {
+		t.Fatal("expected the pipeline matrix, not the job matrix")
+	}
+	if mm.pipelineList.Count() != 1 {
+		t.Fatalf("expected exactly the downstream pipeline in the matrix, got %d", mm.pipelineList.Count())
+	}
+}
+
+// TestUpdate_OpenDownstreamPipelineMsgWithZeroIDShowsStatus covers a
+// trigger job whose downstream pipeline hasn't started yet — no fetch
+// should fire, and the user should be told why instead of nothing
+// happening.
+func TestUpdate_OpenDownstreamPipelineMsgWithZeroIDShowsStatus(t *testing.T) {
+	m := newTestModel(t)
+	updated, cmd := m.Update(components.OpenDownstreamPipelineMsg{ProjectID: 20, PipelineID: 0})
+	mm := updated.(Model)
+	if cmd != nil {
+		t.Fatal("expected no fetch Cmd when the downstream pipeline hasn't started")
+	}
+	if mm.statusMsg == "" {
+		t.Fatal("expected a status message explaining why nothing happened")
+	}
+}
+
 // TestUpdate_JobActionMsgReturnsRefreshCmd is a light regression check that
 // pipelineID now threads through job retry/cancel responses (needed so the
 // post-action refresh targets the right pipeline in a multi-pipeline view).

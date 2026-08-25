@@ -414,6 +414,16 @@ func (m Model) openJobsForPipelines(pipelines []api.Pipeline) (tea.Model, tea.Cm
 	return m, tea.Batch(cmds...)
 }
 
+// openDownstreamPipeline jumps from a trigger job to the pipeline it kicked
+// off, replacing the job matrix with just that one pipeline — the same
+// matrix everything else feeds, so sort/filter/Enter-into-jobs/bulk-retry
+// all work on it exactly like any other pipeline.
+func (m Model) openDownstreamPipeline(projectID, pipelineID int) (tea.Model, tea.Cmd) {
+	return m.startPipelinesBatch(1, func(id reqID) []tea.Cmd {
+		return []tea.Cmd{pipelineByIDCmd(m.ctx, m.client, projectID, pipelineID, id)}
+	})
+}
+
 // saveChosenGroups merges the discovery picker's selection into the active
 // instance's default_groups (additive: existing groups are kept even if
 // not re-selected this time), persists config, and triggers a resync.

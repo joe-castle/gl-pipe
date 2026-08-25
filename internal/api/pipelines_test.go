@@ -143,6 +143,9 @@ func TestListJobs_ComputesRetryCountPerStageAndName(t *testing.T) {
 			{"id": 3, "name": "build", "stage": "build", "status": "success", "runner": {"description": "runner-b"}}
 		]`)
 	})
+	mux.HandleFunc("/api/v4/projects/1/pipelines/10/bridges", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[]`)
+	})
 
 	jobs, err := client.ListJobs(context.Background(), 1, 10)
 	if err != nil {
@@ -156,6 +159,70 @@ func TestListJobs_ComputesRetryCountPerStageAndName(t *testing.T) {
 	}
 	if jobs[2].RunnerTag != "runner-b" {
 		t.Errorf("RunnerTag = %q, want runner-b", jobs[2].RunnerTag)
+	}
+}
+
+// TestListJobs_IncludesTriggerJobsWithDownstreamPipeline is the direct
+// user-reported gap: deploy jobs that use `trigger:` to kick off a
+// downstream pipeline never showed up in the job matrix at all, because
+// GitLab reports them through a separate "bridges" endpoint that ListJobs
+// didn't call. ListJobs must merge both into one list.
+func TestListJobs_IncludesTriggerJobsWithDownstreamPipeline(t *testing.T) {
+	mux, client := setup(t)
+	mux.HandleFunc("/api/v4/projects/1/pipelines/10/jobs", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[{"id": 1, "name": "test", "stage": "test", "status": "success"}]`)
+	})
+	mux.HandleFunc("/api/v4/projects/1/pipelines/10/bridges", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[
+			{
+				"id": 99, "name": "deploy-prod", "stage": "deploy", "status": "success",
+				"downstream_pipeline": {"id": 555, "iid": 42, "project_id": 2, "status": "running"}
+			}
+		]`)
+	})
+
+	jobs, err := client.ListJobs(context.Background(), 1, 10)
+	if err != nil {
+		t.Fatalf("ListJobs returned error: %v", err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("len(jobs) = %d, want 2 (1 regular + 1 trigger)", len(jobs))
+	}
+
+	bridge := jobs[1]
+	if bridge.Name != "deploy-prod" || !bridge.IsBridge {
+		t.Fatalf("expected jobs[1] to be the deploy-prod trigger job, got %+v", bridge)
+	}
+	if bridge.DownstreamProjectID != 2 || bridge.DownstreamPipelineID != 555 || bridge.DownstreamPipelineIID != 42 {
+		t.Fatalf("unexpected downstream pipeline reference: %+v", bridge)
+	}
+	if bridge.DownstreamStatus != StatusRunning {
+		t.Fatalf("DownstreamStatus = %q, want running", bridge.DownstreamStatus)
+	}
+}
+
+// TestListJobs_TriggerJobWithNoDownstreamYetHasZeroPipelineID covers a
+// trigger job that hasn't actually started its downstream pipeline yet
+// (e.g. still pending) — GitLab omits downstream_pipeline entirely in
+// that case, and it must not be mistaken for a real pipeline reference.
+func TestListJobs_TriggerJobWithNoDownstreamYetHasZeroPipelineID(t *testing.T) {
+	mux, client := setup(t)
+	mux.HandleFunc("/api/v4/projects/1/pipelines/10/jobs", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[]`)
+	})
+	mux.HandleFunc("/api/v4/projects/1/pipelines/10/bridges", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[{"id": 99, "name": "deploy-prod", "stage": "deploy", "status": "pending"}]`)
+	})
+
+	jobs, err := client.ListJobs(context.Background(), 1, 10)
+	if err != nil {
+		t.Fatalf("ListJobs returned error: %v", err)
+	}
+	if len(jobs) != 1 || !jobs[0].IsBridge {
+		t.Fatalf("expected 1 trigger job, got %+v", jobs)
+	}
+	if jobs[0].DownstreamPipelineID != 0 {
+		t.Fatalf("expected DownstreamPipelineID 0 with no downstream_pipeline in the response, got %d", jobs[0].DownstreamPipelineID)
 	}
 }
 

@@ -202,13 +202,15 @@ The matrix polls automatically every 10s while any pipeline shown hasn't reached
 |---|---|
 | `x` | Stage/unstage a job for a bulk action |
 | `a` | Stage/unstage all jobs currently loaded |
-| `Enter` | Stream that job's live log |
+| `Enter` | Stream that job's live log — or, on a deploy/trigger job, jump to the downstream pipeline it kicked off |
 | `R` | Bulk retry the staged (or highlighted) job(s) |
 | `K` | Bulk cancel the staged (or highlighted) job(s) |
 | `r` | Refresh now, without waiting for the next automatic poll |
 | `Esc` | Back to the pipeline matrix |
 
 Showing jobs from more than one pipeline adds `Project` and `Pipeline` (`#IID`) columns so you can tell which job belongs to which run. The same automatic polling as the pipeline matrix applies here, keyed off the jobs' own statuses rather than the parent pipeline's.
+
+**Trigger jobs (`trigger:` in `.gitlab-ci.yml`)** — e.g. a deploy job that kicks off a downstream deployment pipeline — show up in the matrix like any other job, with the RUNNER column repurposed to point at the downstream pipeline instead: `→ #45 ✓` (pipeline IID + its status), or `→ (pending)` if the downstream pipeline hasn't started yet. GitLab reports these through a separate API endpoint from regular jobs, so they were previously invisible here entirely — that's a gap in this tool, not something GitLab's API can't tell you. `Enter` on one jumps straight to the downstream pipeline in the pipeline matrix (same view, same sort/filter/retry — nothing new to learn), rather than trying to stream a log that doesn't exist for a trigger job.
 
 ### Pipeline trigger modal
 

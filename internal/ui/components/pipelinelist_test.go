@@ -1,6 +1,7 @@
 package components
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -319,6 +320,86 @@ func TestPipelineList_AddJobsMergesAcrossMultiplePipelines(t *testing.T) {
 	}
 	if len(p.Pipelines) != 2 {
 		t.Fatalf("expected both pipelines recorded, got %d", len(p.Pipelines))
+	}
+}
+
+// TestPipelineList_EnterOnBridgeJobOpensDownstreamPipeline covers the
+// user-reported gap: deploy jobs that trigger a downstream pipeline have
+// no log to stream, so Enter must jump to the downstream pipeline instead
+// of emitting OpenLogsMsg.
+func TestPipelineList_EnterOnBridgeJobOpensDownstreamPipeline(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{{ID: 1, ProjectID: 10}})
+	p.AddJobs(api.Pipeline{ID: 1, ProjectID: 10}, []api.Job{
+		{ID: 100, ProjectID: 10, PipelineID: 1, IsBridge: true, DownstreamProjectID: 20, DownstreamPipelineID: 555},
+	})
+
+	_, cmd := p.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected a Cmd")
+	}
+	msg, ok := cmd().(OpenDownstreamPipelineMsg)
+	if !ok {
+		t.Fatalf("expected OpenDownstreamPipelineMsg, got %T", cmd())
+	}
+	if msg.ProjectID != 20 || msg.PipelineID != 555 {
+		t.Fatalf("unexpected downstream reference: %+v", msg)
+	}
+}
+
+// TestPipelineList_EnterOnBridgeJobWithNoDownstreamYet still emits
+// OpenDownstreamPipelineMsg (with PipelineID 0) rather than silently doing
+// nothing or trying to stream a log that doesn't exist — the root model
+// decides how to report "not started yet".
+func TestPipelineList_EnterOnBridgeJobWithNoDownstreamYet(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{{ID: 1, ProjectID: 10}})
+	p.AddJobs(api.Pipeline{ID: 1, ProjectID: 10}, []api.Job{
+		{ID: 100, ProjectID: 10, PipelineID: 1, IsBridge: true},
+	})
+
+	_, cmd := p.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	msg, ok := cmd().(OpenDownstreamPipelineMsg)
+	if !ok {
+		t.Fatalf("expected OpenDownstreamPipelineMsg, got %T", cmd())
+	}
+	if msg.PipelineID != 0 {
+		t.Fatalf("expected PipelineID 0, got %d", msg.PipelineID)
+	}
+}
+
+// TestPipelineList_EnterOnRegularJobStillOpensLogs is the non-regression
+// check: ordinary jobs must keep streaming logs, not be swept into the
+// bridge-job path.
+func TestPipelineList_EnterOnRegularJobStillOpensLogs(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{{ID: 1, ProjectID: 10}})
+	p.AddJobs(api.Pipeline{ID: 1, ProjectID: 10}, []api.Job{{ID: 100, ProjectID: 10, PipelineID: 1}})
+
+	_, cmd := p.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if _, ok := cmd().(OpenLogsMsg); !ok {
+		t.Fatalf("expected OpenLogsMsg for a regular job, got %T", cmd())
+	}
+}
+
+// TestJobRunnerCell covers the RUNNER column's dual purpose: the runner
+// tag for a regular job, or a visible pointer to the downstream pipeline
+// (with its status) for a trigger job — the whole point being that a
+// deploy-trigger job is no longer invisible in the matrix.
+func TestJobRunnerCell(t *testing.T) {
+	regular := api.Job{RunnerTag: "runner-a"}
+	if got := jobRunnerCell(regular); got != "runner-a" {
+		t.Errorf("regular job cell = %q, want runner-a", got)
+	}
+
+	pending := api.Job{IsBridge: true}
+	if got := jobRunnerCell(pending); got != "→ (pending)" {
+		t.Errorf("pending bridge cell = %q, want → (pending)", got)
+	}
+
+	running := api.Job{IsBridge: true, DownstreamPipelineID: 555, DownstreamPipelineIID: 42, DownstreamStatus: api.StatusRunning}
+	if got := jobRunnerCell(running); !strings.Contains(got, "#42") {
+		t.Errorf("running bridge cell = %q, want it to mention #42", got)
 	}
 }
 

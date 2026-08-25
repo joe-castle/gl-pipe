@@ -632,6 +632,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case components.OpenJobsMsg:
 		return m.openJobsForPipelines(msg.Pipelines)
 
+	case components.OpenDownstreamPipelineMsg:
+		if msg.PipelineID == 0 {
+			m.setStatus("downstream pipeline hasn't started yet")
+			return m, nil
+		}
+		return m.openDownstreamPipeline(msg.ProjectID, msg.PipelineID)
+
 	case components.OpenLogsMsg:
 		return m.openLogs(msg)
 

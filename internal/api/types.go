@@ -84,6 +84,20 @@ type Job struct {
 	RetryCount int
 	WebURL     string
 	Duration   time.Duration
+
+	// IsBridge and the Downstream* fields are set only for pipeline
+	// trigger jobs (a `trigger:` job in .gitlab-ci.yml, e.g. the deploy
+	// step that kicks off a downstream deployment pipeline). GitLab
+	// reports these through a separate "bridges" endpoint, not the
+	// regular jobs list — ListJobs merges both so trigger jobs show up
+	// in the matrix at all. DownstreamPipelineID is 0 if the downstream
+	// pipeline hasn't been created yet (the trigger job is still
+	// pending/running).
+	IsBridge              bool
+	DownstreamProjectID   int
+	DownstreamPipelineID  int
+	DownstreamPipelineIID int
+	DownstreamStatus      PipelineStatus
 }
 
 // VariableType matches GitLab's pipeline variable types.
