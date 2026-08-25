@@ -125,6 +125,14 @@ func (g GroupPicker) Update(msg tea.Msg) (GroupPicker, tea.Cmd) {
 				g.syncRows()
 			}
 			return g, nil
+		case "a":
+			ids := make([]string, len(g.filtered))
+			for i, grp := range g.filtered {
+				ids[i] = grp.FullPath
+			}
+			toggleSetAll(g.Selected, ids)
+			g.syncRows()
+			return g, nil
 		case "enter":
 			if g.isSaveRow() {
 				paths := make([]string, 0, len(g.Selected))
@@ -137,7 +145,7 @@ func (g GroupPicker) Update(msg tea.Msg) (GroupPicker, tea.Cmd) {
 				return g, func() tea.Msg { return GroupsChosenMsg{FullPaths: paths} }
 			}
 			grp := g.filtered[g.table.Cursor()]
-			g.Selected[grp.FullPath] = !g.Selected[grp.FullPath]
+			toggleSet(g.Selected, grp.FullPath)
 			g.syncRows()
 			return g, nil
 		}
@@ -184,6 +192,7 @@ func (g GroupPicker) View() string {
 	b.WriteString("\n\n" + RenderHelp(
 		[2]string{"/", "filter"},
 		[2]string{"x/enter", "toggle"},
+		[2]string{"a", "select/deselect all"},
 		[2]string{"enter on last row", "save"},
 		[2]string{"esc", "cancel"},
 	))

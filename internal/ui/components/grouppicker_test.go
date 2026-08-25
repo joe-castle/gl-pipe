@@ -38,6 +38,38 @@ func TestGroupPicker_ToggleSelect(t *testing.T) {
 	}
 }
 
+// TestGroupPicker_EnterToggleDoesNotLeakCount is a regression test: enter
+// on a non-save row used g.Selected[k] = !g.Selected[k] directly instead of
+// toggleSet, the same leaking-count bug fixed everywhere else — found while
+// wiring select-all here.
+func TestGroupPicker_EnterToggleDoesNotLeakCount(t *testing.T) {
+	g := NewGroupPicker()
+	g.Open([]api.Group{{ID: 1, FullPath: "backend/core"}}, nil)
+
+	updated, _ := g.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if len(updated.Selected) != 0 {
+		t.Fatalf("expected Selected empty after toggling on/off via enter, got %+v", updated.Selected)
+	}
+}
+
+func TestGroupPicker_SelectAllRespectsActiveFilter(t *testing.T) {
+	g := NewGroupPicker()
+	g.Open([]api.Group{
+		{ID: 1, Name: "Core", FullPath: "backend/core"},
+		{ID: 2, Name: "Infra", FullPath: "infrastructure"},
+	}, nil)
+	updated, _ := g.Update(runeKey('/'))
+	updated.filterInput.SetValue("backend")
+	updated.applyFilter()
+	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyEnter}) // exit filter text entry
+
+	updated, _ = updated.Update(runeKey('a'))
+	if len(updated.Selected) != 1 || !updated.Selected["backend/core"] {
+		t.Fatalf("expected only the filtered group staged, got %+v", updated.Selected)
+	}
+}
+
 func TestGroupPicker_FilterNarrowsResults(t *testing.T) {
 	g := NewGroupPicker()
 	g.Open([]api.Group{

@@ -265,6 +265,14 @@ func (p ProjectList) updateBrowse(msg tea.Msg) (ProjectList, tea.Cmd) {
 				p.syncRows()
 			}
 			return p, nil
+		case "a":
+			ids := make([]int, len(p.filtered))
+			for i, proj := range p.filtered {
+				ids[i] = proj.ID
+			}
+			toggleSetAll(p.Selected, ids)
+			p.syncRows()
+			return p, nil
 		}
 	}
 	var cmd tea.Cmd
@@ -301,6 +309,7 @@ func (p ProjectList) View() string {
 		b.WriteString("\n" + RenderHelp(
 			[2]string{"/", "filter"},
 			[2]string{"x", "stage"},
+			[2]string{"a", "stage/unstage all"},
 			[2]string{"T", "lock latest tag"},
 			[2]string{"enter", "view pipelines"},
 			[2]string{"M", "view MRs"},

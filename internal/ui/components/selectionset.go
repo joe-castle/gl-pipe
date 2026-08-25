@@ -15,3 +15,26 @@ func toggleSet[K comparable](set map[K]bool, key K) {
 		set[key] = true
 	}
 }
+
+// toggleSetAll stages every key in ids, unless every one of them is
+// already staged, in which case it unstages all of them instead — one key
+// toggles between "select all (visible)" and "select none", the way a
+// tri-state "select all" checkbox usually behaves. ids is meant to be
+// whatever's currently visible (post-filter), not necessarily the full
+// underlying set, so selecting all respects an active filter.
+func toggleSetAll[K comparable](set map[K]bool, ids []K) {
+	all := len(ids) > 0
+	for _, id := range ids {
+		if !set[id] {
+			all = false
+			break
+		}
+	}
+	for _, id := range ids {
+		if all {
+			delete(set, id)
+		} else {
+			set[id] = true
+		}
+	}
+}

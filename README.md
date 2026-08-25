@@ -111,6 +111,7 @@ The project explorer only syncs projects from an instance's `default_groups` —
 |---|---|
 | `/` | Fuzzy-filter projects by path |
 | `x` | Toggle multi-select on the highlighted project |
+| `a` | Stage/unstage all — respects the current `/` filter |
 | `T` | Lock the highlighted project's ref to its latest SemVer tag |
 | `Enter` | View pipelines for the staged (`x`) projects together, or just the highlighted one if none are staged |
 | `M` | Open merge requests for the staged (or highlighted) project(s) |
@@ -124,6 +125,8 @@ The project explorer only syncs projects from an instance's `default_groups` —
 | `Esc` | Cancel |
 
 Opened via `<Space> f`. Two separate fields — group and query — not one combined string, so the query can freely use GitLab's own search qualifiers without ambiguity. The group field starts prefilled from the active instance's first `default_groups` entry; clear or edit it to search elsewhere.
+
+The search is scoped **only by the group field** — it calls GitLab's group-scoped blob search API directly and searches every project in that group (recursively through subgroups), regardless of anything filtered or staged in the project explorer. Pre-filtering the explorer with `/` before opening blob search has no effect on what gets searched.
 
 The query is passed to GitLab's blob search unmodified, so its qualifiers work exactly as GitLab defines them:
 
@@ -139,6 +142,7 @@ These qualifiers are part of GitLab's **Advanced Search** (Elasticsearch), which
 |---|---|
 | `/` | Fuzzy-filter the group list |
 | `x` / `Enter` | Toggle the highlighted group |
+| `a` | Select/deselect all — respects the current `/` filter |
 | `Enter` on `[ Save ]` | Merge selected groups into `default_groups` and resync |
 | `Esc` | Cancel without saving |
 
@@ -148,6 +152,7 @@ These qualifiers are part of GitLab's **Advanced Search** (Elasticsearch), which
 |---|---|
 | `/` | Fuzzy-filter by title, branch, project, or author |
 | `x` | Stage/unstage the highlighted MR |
+| `a` | Stage/unstage all — respects the current `/` filter |
 | `Enter` | Jump to pipelines for the staged (or highlighted) MR(s) — feeds straight into the pipeline matrix below, so sort/filter/bulk-retry all apply |
 | `Esc` | Cancel |
 
@@ -158,6 +163,7 @@ Opened via `<Space> m` ("my MRs" — assigned + authored, open, across every syn
 | Key | Action |
 |---|---|
 | `x` | Stage/unstage a pipeline for a bulk action |
+| `a` | Stage/unstage all — respects the current `/` filter |
 | `Enter` | View job matrices for the staged pipelines together, or just the highlighted one if none are staged |
 | `R` | Bulk retry the staged (or highlighted) pipeline(s) |
 | `K` | Bulk cancel the staged (or highlighted) pipeline(s) |
@@ -174,6 +180,7 @@ If you don't know which project a branch lives in, `/` won't find it — it only
 | Key | Action |
 |---|---|
 | `x` | Stage/unstage a job for a bulk action |
+| `a` | Stage/unstage all jobs currently loaded |
 | `Enter` | Stream that job's live log |
 | `R` | Bulk retry the staged (or highlighted) job(s) |
 | `K` | Bulk cancel the staged (or highlighted) job(s) |

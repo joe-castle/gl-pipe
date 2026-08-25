@@ -206,6 +206,14 @@ func (l MRList) Update(msg tea.Msg) (MRList, tea.Cmd) {
 				l.syncRows()
 			}
 			return l, nil
+		case "a":
+			ids := make([]int, len(l.filtered))
+			for i, mr := range l.filtered {
+				ids[i] = mr.ID
+			}
+			toggleSetAll(l.Selected, ids)
+			l.syncRows()
+			return l, nil
 		case "enter":
 			targets := l.SelectedMRs()
 			if len(targets) == 0 {
@@ -253,6 +261,7 @@ func (l MRList) View() string {
 	b.WriteString("\n\n" + RenderHelp(
 		[2]string{"/", "filter"},
 		[2]string{"x", "stage"},
+		[2]string{"a", "stage/unstage all"},
 		[2]string{"enter", "jump to pipelines (staged, or highlighted)"},
 		[2]string{"esc", "cancel"},
 	))

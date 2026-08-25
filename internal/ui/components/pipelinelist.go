@@ -570,6 +570,14 @@ func (p PipelineList) Update(msg tea.Msg) (PipelineList, tea.Cmd) {
 			case "S":
 				p.ToggleSortDirection()
 				return p, nil
+			case "a":
+				ids := make([]int, len(p.filtered))
+				for i, pl := range p.filtered {
+					ids[i] = pl.ID
+				}
+				toggleSetAll(p.Selected, ids)
+				p.syncPipeRows()
+				return p, nil
 			}
 		case modeJobs:
 			switch km.String() {
@@ -591,6 +599,14 @@ func (p PipelineList) Update(msg tea.Msg) (PipelineList, tea.Cmd) {
 				targets := p.SelectedJobs()
 				retry := km.String() == "R"
 				return p, func() tea.Msg { return BulkJobActionMsg{Targets: targets, Retry: retry} }
+			case "a":
+				ids := make([]int, len(p.jobs))
+				for i, j := range p.jobs {
+					ids[i] = j.ID
+				}
+				toggleSetAll(p.SelectedJ, ids)
+				p.syncJobRows()
+				return p, nil
 			}
 		}
 	}
@@ -616,6 +632,7 @@ func (p PipelineList) View() string {
 		}
 		help := "\n" + RenderHelp(
 			[2]string{"x", "stage"},
+			[2]string{"a", "stage/unstage all"},
 			[2]string{"enter", "view logs"},
 			[2]string{"R", "bulk retry"},
 			[2]string{"K", "bulk cancel"},
@@ -638,6 +655,7 @@ func (p PipelineList) View() string {
 	}
 	help := "\n" + RenderHelp(
 		[2]string{"x", "stage"},
+		[2]string{"a", "stage/unstage all"},
 		[2]string{"enter", "view jobs"},
 		[2]string{"R", "bulk retry"},
 		[2]string{"K", "bulk cancel"},

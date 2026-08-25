@@ -61,6 +61,48 @@ func TestProjectList_HighlightedRecoversAfterEmptyToNonEmpty(t *testing.T) {
 	}
 }
 
+// TestProjectList_SelectAllRespectsActiveFilter is the core of the
+// select-all feature: 'a' must stage only what's currently visible after a
+// '/' filter, not the whole underlying project list.
+func TestProjectList_SelectAllRespectsActiveFilter(t *testing.T) {
+	p := NewProjectList()
+	p.SetProjects([]api.Project{
+		{ID: 1, PathWithNamespace: "backend/svc-a"},
+		{ID: 2, PathWithNamespace: "backend/svc-b"},
+		{ID: 3, PathWithNamespace: "frontend/app"},
+	})
+	p.filterInput.SetValue("backend")
+	p.applyFilter()
+
+	updated, _ := p.Update(runeKey('a'))
+	if len(updated.Selected) != 2 || !updated.Selected[1] || !updated.Selected[2] {
+		t.Fatalf("expected only the 2 filtered (backend) projects staged, got %+v", updated.Selected)
+	}
+	if updated.Selected[3] {
+		t.Fatal("expected the filtered-out project to remain unstaged")
+	}
+}
+
+// TestProjectList_SelectAllTogglesOffWhenAllAlreadyStaged mirrors a
+// checkbox's tri-state behavior: pressing 'a' again when everything
+// visible is already staged unstages it instead of being a no-op.
+func TestProjectList_SelectAllTogglesOffWhenAllAlreadyStaged(t *testing.T) {
+	p := NewProjectList()
+	p.SetProjects([]api.Project{
+		{ID: 1, PathWithNamespace: "a/b"},
+		{ID: 2, PathWithNamespace: "c/d"},
+	})
+
+	updated, _ := p.Update(runeKey('a'))
+	if len(updated.Selected) != 2 {
+		t.Fatalf("expected both staged after first 'a', got %+v", updated.Selected)
+	}
+	updated, _ = updated.Update(runeKey('a'))
+	if len(updated.Selected) != 0 {
+		t.Fatalf("expected both unstaged after second 'a', got %+v", updated.Selected)
+	}
+}
+
 // TestProjectList_ToggleSelectDoesNotLeakCount is a regression test: 'x'
 // used to set Selected[id] = false rather than delete the key, so the map
 // entry (and therefore len(Selected), the "staged" count shown to the

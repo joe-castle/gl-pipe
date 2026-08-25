@@ -8,6 +8,23 @@ import (
 	"github.com/joeca/gl-pipe/internal/api"
 )
 
+func TestMRList_SelectAllRespectsActiveFilter(t *testing.T) {
+	l := NewMRList()
+	l.SetMRs([]api.MergeRequest{
+		{ID: 1, Title: "Fix login bug", SourceBranch: "fix/login"},
+		{ID: 2, Title: "Unrelated change", SourceBranch: "chore/deps"},
+	})
+	updated, _ := l.Update(runeKey('/'))
+	updated.filterInput.SetValue("login")
+	updated.applyFilter()
+	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyEnter}) // exit filter text entry
+
+	updated, _ = updated.Update(runeKey('a'))
+	if len(updated.Selected) != 1 || !updated.Selected[1] {
+		t.Fatalf("expected only the filtered MR staged, got %+v", updated.Selected)
+	}
+}
+
 func TestMRList_ToggleSelectDoesNotLeakCount(t *testing.T) {
 	l := NewMRList()
 	l.SetMRs([]api.MergeRequest{{ID: 1, Title: "Fix login"}})

@@ -358,6 +358,47 @@ func TestPipelineList_FindPipeline(t *testing.T) {
 	}
 }
 
+// TestPipelineList_SelectAllRespectsActiveFilter mirrors ProjectList's
+// select-all-respects-filter test, one level down.
+func TestPipelineList_SelectAllRespectsActiveFilter(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{
+		{ID: 1, Ref: "main"},
+		{ID: 2, Ref: "main"},
+		{ID: 3, Ref: "feature-x"},
+	})
+	updated, _ := p.Update(runeKey('/'))
+	updated.filterInput.SetValue("main")
+	updated.syncPipeRows()
+	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyEnter}) // exit filter text entry
+
+	updated, _ = updated.Update(runeKey('a'))
+	if len(updated.Selected) != 2 || !updated.Selected[1] || !updated.Selected[2] {
+		t.Fatalf("expected only the 2 filtered pipelines staged, got %+v", updated.Selected)
+	}
+	if updated.Selected[3] {
+		t.Fatal("expected the filtered-out pipeline to remain unstaged")
+	}
+}
+
+// TestPipelineList_SelectAllJobsCoversFullJobSet covers the job-matrix
+// variant, which has no filter of its own — 'a' should stage every job
+// currently loaded.
+func TestPipelineList_SelectAllJobsCoversFullJobSet(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{{ID: 1}})
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10}, {ID: 20}, {ID: 30}})
+
+	updated, _ := p.Update(runeKey('a'))
+	if len(updated.SelectedJ) != 3 {
+		t.Fatalf("expected all 3 jobs staged, got %+v", updated.SelectedJ)
+	}
+	updated, _ = updated.Update(runeKey('a'))
+	if len(updated.SelectedJ) != 0 {
+		t.Fatalf("expected all 3 jobs unstaged on second 'a', got %+v", updated.SelectedJ)
+	}
+}
+
 // TestPipelineList_ToggleSelectDoesNotLeakCount and
 // TestPipelineList_ToggleJobDoesNotLeakCount guard the same toggleSet fix
 // at the pipeline-matrix and job-matrix call sites.
