@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 )
 
 func TestListGroups_ParsesFullPath(t *testing.T) {
@@ -83,6 +84,24 @@ func TestListTags_ParsesCommitSHA(t *testing.T) {
 	}
 }
 
+func TestListTags_ParsesCreatedAt(t *testing.T) {
+	mux, client := setup(t)
+	mux.HandleFunc("/api/v4/projects/1/repository/tags", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[{"name": "v1.2.3", "commit": {"id": "abc"}, "created_at": "2026-01-15T10:00:00Z"}]`)
+	})
+
+	refs, err := client.ListTags(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ListTags returned error: %v", err)
+	}
+	if len(refs) != 1 || refs[0].CreatedAt.IsZero() {
+		t.Fatalf("expected CreatedAt parsed, got %+v", refs)
+	}
+	if refs[0].CreatedAt.Year() != 2026 {
+		t.Errorf("CreatedAt = %v, want year 2026", refs[0].CreatedAt)
+	}
+}
+
 func TestLatestSemVerTag_PicksHighestVersion(t *testing.T) {
 	refs := []Ref{
 		{Name: "v1.2.3", IsTag: true},
@@ -129,5 +148,52 @@ func TestLatestSemVerTag_IgnoresNonSemVerTags(t *testing.T) {
 func TestLatestSemVerTag_NoTagsReturnsFalse(t *testing.T) {
 	if _, ok := LatestSemVerTag(nil); ok {
 		t.Error("LatestSemVerTag(nil) ok = true, want false")
+	}
+}
+
+func TestLatestCreatedTag_PicksMostRecentTimestamp(t *testing.T) {
+	now := time.Now()
+	refs := []Ref{
+		{Name: "build-100", IsTag: true, CreatedAt: now.Add(-2 * time.Hour)},
+		{Name: "build-102", IsTag: true, CreatedAt: now},
+		{Name: "build-101", IsTag: true, CreatedAt: now.Add(-1 * time.Hour)},
+	}
+
+	best, ok := LatestCreatedTag(refs)
+	if !ok {
+		t.Fatal("LatestCreatedTag() ok = false, want true")
+	}
+	if best.Name != "build-102" {
+		t.Errorf("LatestCreatedTag() = %q, want build-102", best.Name)
+	}
+}
+
+func TestLatestCreatedTag_WorksForNonSemVerNames(t *testing.T) {
+	// The whole point of this strategy: names LatestSemVerTag would reject.
+	refs := []Ref{
+		{Name: "release-candidate", IsTag: true, CreatedAt: time.Now()},
+	}
+	if _, ok := LatestSemVerTag(refs); ok {
+		t.Fatal("expected LatestSemVerTag to reject a non-SemVer name (sanity check)")
+	}
+	best, ok := LatestCreatedTag(refs)
+	if !ok || best.Name != "release-candidate" {
+		t.Fatalf("expected LatestCreatedTag to accept it regardless, got %+v ok=%v", best, ok)
+	}
+}
+
+func TestLatestCreatedTag_IgnoresBranchesAndZeroTimestamps(t *testing.T) {
+	refs := []Ref{
+		{Name: "main", IsTag: false, CreatedAt: time.Now()}, // branch, not a tag
+		{Name: "v1", IsTag: true},                           // zero CreatedAt: unknown, skip
+	}
+	if _, ok := LatestCreatedTag(refs); ok {
+		t.Fatal("expected no qualifying tag, got ok=true")
+	}
+}
+
+func TestLatestCreatedTag_NoTagsReturnsFalse(t *testing.T) {
+	if _, ok := LatestCreatedTag(nil); ok {
+		t.Error("LatestCreatedTag(nil) ok = true, want false")
 	}
 }

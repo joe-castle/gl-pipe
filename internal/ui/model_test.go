@@ -261,6 +261,73 @@ func TestHandleKey_CapitalTUnlocksWhenAllStagedAlreadyLocked(t *testing.T) {
 	}
 }
 
+// TestHandleKey_CapitalTUnlocksOnlyTheLockedOnesInAPartialBatch is a
+// regression test for the exact bug reported: with a large staged batch,
+// it's common for one or more projects to have no qualifying tag and so
+// never get locked. Requiring every single targeted project to be locked
+// before T would ever unlock meant such a batch could never be unlocked
+// again via T. It should now unlock whatever *is* locked and leave the
+// rest alone.
+func TestHandleKey_CapitalTUnlocksOnlyTheLockedOnesInAPartialBatch(t *testing.T) {
+	m := newTestModel(t)
+	m.projectList.SetProjects([]api.Project{
+		{ID: 10, PathWithNamespace: "a/b"},
+		{ID: 11, PathWithNamespace: "c/d"}, // never got a tag locked (e.g. no semver tags)
+		{ID: 12, PathWithNamespace: "e/f"},
+	})
+	m.projectList.Selected[10] = true
+	m.projectList.Selected[11] = true
+	m.projectList.Selected[12] = true
+	m.projectList.SetLockedRef(10, "v1.0.0")
+	m.projectList.SetLockedRef(12, "v2.0.0")
+	// project 11 deliberately left unlocked
+
+	updated, cmd := m.Update(runeKey('T'))
+	mm := updated.(Model)
+	if cmd != nil {
+		t.Fatal("expected no fetch Cmd — with any project already locked, T should unlock, not re-fetch")
+	}
+	if _, ok := mm.projectList.LockedRef[10]; ok {
+		t.Error("expected project 10 unlocked")
+	}
+	if _, ok := mm.projectList.LockedRef[12]; ok {
+		t.Error("expected project 12 unlocked")
+	}
+	if _, ok := mm.projectList.LockedRef[11]; ok {
+		t.Error("project 11 was never locked; it should not have gained a lock")
+	}
+}
+
+// TestHandleKey_LowercaseTUsesLatestCreatedStrategy covers the second
+// ask: a way to choose "latest created" over "latest SemVer" when picking
+// which tag to lock to.
+func TestHandleKey_LowercaseTUsesLatestCreatedStrategy(t *testing.T) {
+	m := newTestModel(t)
+	m.projectList.SetProjects([]api.Project{{ID: 10, PathWithNamespace: "a/b"}})
+
+	updated, cmd := m.Update(runeKey('t'))
+	mm := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a Cmd loading tags")
+	}
+	if mm.refLockMode != refLockLatestCreated {
+		t.Fatalf("expected refLockMode=refLockLatestCreated, got %v", mm.refLockMode)
+	}
+
+	now := time.Now()
+	updated, _ = mm.Update(refsLoadedMsg{
+		reqID: mm.genRefs, projectID: 10,
+		refs: []api.Ref{
+			{Name: "not-semver-but-newest", IsTag: true, CreatedAt: now},
+			{Name: "v9.9.9", IsTag: true, CreatedAt: now.Add(-time.Hour)},
+		},
+	})
+	mm = updated.(Model)
+	if mm.projectList.LockedRef[10] != "not-semver-but-newest" {
+		t.Fatalf("expected the most-recently-created tag chosen regardless of SemVer validity, got %q", mm.projectList.LockedRef[10])
+	}
+}
+
 // TestHandleKey_CapitalMOpensMRsForStagedProjects covers the per-project
 // MR fetch: staging projects and pressing M should batch-fetch each
 // project's MRs into the same modal, not just the highlighted one.

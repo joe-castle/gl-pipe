@@ -26,6 +26,7 @@ type Ref struct {
 	Name      string
 	IsTag     bool
 	CommitSHA string
+	CreatedAt time.Time // tags: the tag's own creation date; branches: the tip commit's date
 }
 
 // PipelineStatus mirrors GitLab's pipeline/job status strings.

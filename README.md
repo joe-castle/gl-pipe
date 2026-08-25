@@ -112,11 +112,12 @@ The project explorer only syncs projects from an instance's `default_groups` —
 | `/` | Fuzzy-filter projects by path |
 | `x` | Toggle multi-select on the highlighted project |
 | `a` | Stage/unstage all — respects the current `/` filter |
-| `T` | Lock the staged (or highlighted) project(s) to their latest SemVer tag — press again to unlock them if they're all already locked |
+| `T` | Lock the staged (or highlighted) project(s) to their latest SemVer tag — press again to unlock any of them that are currently locked |
+| `t` | Same as `T`, but locks to the most recently *created* tag instead of the highest SemVer — for repos that don't tag with version numbers |
 | `Enter` | View pipelines for the staged (`x`) projects together, or just the highlighted one if none are staged |
 | `M` | Open merge requests for the staged (or highlighted) project(s) |
 
-To lock every project matching a filter to its latest tag: `/` to filter, `a` to stage all of them, `T` to lock. `T` again unlocks — it toggles based on whether everything targeted is already locked.
+To lock every project matching a filter to its latest tag: `/` to filter, `a` to stage all of them, `T` (SemVer) or `t` (most recently created) to lock. Pressing the same key again unlocks — it targets whatever in the batch is currently locked, so one project with no qualifying tag (left on its default ref) won't block unlocking the rest.
 
 ### Blob (code) search modal
 

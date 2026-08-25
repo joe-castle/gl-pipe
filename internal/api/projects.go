@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 	"golang.org/x/mod/semver"
@@ -76,10 +77,12 @@ func (c *Client) ListBranches(ctx context.Context, projectID int) ([]Ref, error)
 	refs := make([]Ref, 0, len(branches))
 	for _, b := range branches {
 		sha := ""
+		var createdAt time.Time
 		if b.Commit != nil {
 			sha = b.Commit.ID
+			createdAt = timeOrZero(b.Commit.CreatedAt)
 		}
-		refs = append(refs, Ref{Name: b.Name, IsTag: false, CommitSHA: sha})
+		refs = append(refs, Ref{Name: b.Name, IsTag: false, CommitSHA: sha, CreatedAt: createdAt})
 	}
 	return refs, nil
 }
@@ -98,7 +101,7 @@ func (c *Client) ListTags(ctx context.Context, projectID int) ([]Ref, error) {
 		if t.Commit != nil {
 			sha = t.Commit.ID
 		}
-		refs = append(refs, Ref{Name: t.Name, IsTag: true, CommitSHA: sha})
+		refs = append(refs, Ref{Name: t.Name, IsTag: true, CommitSHA: sha, CreatedAt: timeOrZero(t.CreatedAt)})
 	}
 	return refs, nil
 }
@@ -123,6 +126,27 @@ func LatestSemVerTag(refs []Ref) (Ref, bool) {
 		if !found || semver.Compare(v, bestVersion) > 0 {
 			best = r
 			bestVersion = v
+			found = true
+		}
+	}
+	return best, found
+}
+
+// LatestCreatedTag returns the most recently created tag among refs,
+// regardless of whether its name parses as SemVer — an alternative to
+// LatestSemVerTag for repos that don't tag with version numbers (date
+// stamps, build numbers, etc.). The second return value is false if no
+// tag has a known creation date.
+func LatestCreatedTag(refs []Ref) (Ref, bool) {
+	var best Ref
+	found := false
+
+	for _, r := range refs {
+		if !r.IsTag || r.CreatedAt.IsZero() {
+			continue
+		}
+		if !found || r.CreatedAt.After(best.CreatedAt) {
+			best = r
 			found = true
 		}
 	}

@@ -76,7 +76,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "T":
 			if !textFocused {
-				return m.toggleLockLatestTag()
+				return m.toggleLockRef(refLockSemVer)
+			}
+		case "t":
+			if !textFocused {
+				return m.toggleLockRef(refLockLatestCreated)
 			}
 		case "enter":
 			if !textFocused {
@@ -315,34 +319,44 @@ func (m Model) openMRsForSelected() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// toggleLockLatestTag is T on the explorer: lock the staged (or
-// highlighted-fallback) project(s) to their latest SemVer tag, same
-// "staged, or highlighted" convention as every other batch action. If
-// every targeted project is already locked, it unlocks them all instead —
-// the same toggle-based semantics as 'a' (select all).
-func (m Model) toggleLockLatestTag() (tea.Model, tea.Cmd) {
+// toggleLockRef is T/t on the explorer: lock the staged (or highlighted-
+// fallback) project(s) to their latest tag under the given strategy, same
+// "staged, or highlighted" convention as every other batch action.
+//
+// If *any* targeted project is currently locked, this unlocks every
+// currently-locked project in the set instead of fetching — deliberately
+// "any", not "all": with a large batch it's common for one or two projects
+// to have no qualifying tag and so never end up locked, and requiring 100%
+// coverage before the toggle could ever flip back to "unlock" meant a
+// batch with even one such straggler could never be unlocked via T again.
+func (m Model) toggleLockRef(strategy refLockStrategy) (tea.Model, tea.Cmd) {
 	projects := m.projectList.SelectedProjects()
 	if len(projects) == 0 {
 		return m, nil
 	}
 
-	allLocked := true
+	anyLocked := false
 	for _, proj := range projects {
-		if _, ok := m.projectList.LockedRef[proj.ID]; !ok {
-			allLocked = false
+		if _, ok := m.projectList.LockedRef[proj.ID]; ok {
+			anyLocked = true
 			break
 		}
 	}
-	if allLocked {
+	if anyLocked {
+		unlocked := 0
 		for _, proj := range projects {
-			m.projectList.ClearLockedRef(proj.ID)
+			if _, ok := m.projectList.LockedRef[proj.ID]; ok {
+				m.projectList.ClearLockedRef(proj.ID)
+				unlocked++
+			}
 		}
-		m.setStatus(fmt.Sprintf("unlocked %d project(s)", len(projects)))
+		m.setStatus(fmt.Sprintf("unlocked %d project(s)", unlocked))
 		return m, nil
 	}
 
 	id := m.newReqID()
 	m.genRefs = id
+	m.refLockMode = strategy
 	m.loading = true
 	m.refsPending = len(projects)
 	m.refsErrored = 0

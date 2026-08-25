@@ -34,6 +34,28 @@ const (
 	panePipelines
 )
 
+// refLockStrategy picks how T/t decide a project's "latest" tag.
+type refLockStrategy int
+
+const (
+	refLockSemVer        refLockStrategy = iota // T: highest parsed SemVer
+	refLockLatestCreated                        // t: most recently created tag, any name
+)
+
+func (s refLockStrategy) pick(refs []api.Ref) (api.Ref, bool) {
+	if s == refLockLatestCreated {
+		return api.LatestCreatedTag(refs)
+	}
+	return api.LatestSemVerTag(refs)
+}
+
+func (s refLockStrategy) label() string {
+	if s == refLockLatestCreated {
+		return "latest created tag"
+	}
+	return "latest SemVer tag"
+}
+
 // Model is gl-pipe's root Bubbletea model.
 type Model struct {
 	ctx    context.Context
@@ -78,14 +100,16 @@ type Model struct {
 	mrsErrored int
 
 	// refsPending/refsErrored/refsLocked/refsSkipped track a "lock to
-	// latest tag" batch (T on the explorer, across staged/highlighted
+	// latest tag" batch (T/t on the explorer, across staged/highlighted
 	// projects), same completion-summary pattern as the pipeline and MR
-	// batches. refsSkipped is a project with no semver tags at all —
-	// distinct from refsErrored (an actual API failure).
+	// batches. refsSkipped is a project with no tag qualifying under the
+	// active refLockMode — distinct from refsErrored (an actual API
+	// failure).
 	refsPending int
 	refsErrored int
 	refsLocked  int
 	refsSkipped int
+	refLockMode refLockStrategy // which strategy the in-flight refsPending batch is using
 
 	statusMsg string
 	statusErr bool
@@ -333,7 +357,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			m.refsErrored++
-		} else if ref, ok := api.LatestSemVerTag(msg.refs); ok {
+		} else if ref, ok := m.refLockMode.pick(msg.refs); ok {
 			m.projectList.SetLockedRef(msg.projectID, ref.Name)
 			m.refsLocked++
 		} else {
@@ -344,9 +368,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.refsPending == 0 {
 			m.loading = false
-			summary := fmt.Sprintf("locked %d project(s) to latest tag", m.refsLocked)
+			summary := fmt.Sprintf("locked %d project(s) to %s", m.refsLocked, m.refLockMode.label())
 			if m.refsSkipped > 0 {
-				summary += fmt.Sprintf(", %d with no semver tags", m.refsSkipped)
+				summary += fmt.Sprintf(", %d with no qualifying tags", m.refsSkipped)
 			}
 			if m.refsErrored > 0 {
 				summary += fmt.Sprintf(", %d failed", m.refsErrored)
