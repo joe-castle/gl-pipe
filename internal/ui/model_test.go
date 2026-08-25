@@ -180,11 +180,13 @@ func TestUpdate_RefPickerRequestWithNoProjectShowsStatus(t *testing.T) {
 	}
 }
 
-// TestHandleKey_CtrlROpensExplorerRefOverride covers the explorer's own
-// ctrl+r: unlike the trigger modal's ctrl+r (which opens the picker inside
-// Variables), this one must route the fetched refs into ProjectList, and
-// must apply the chosen ref to every staged project, not just the first.
-func TestHandleKey_CtrlROpensExplorerRefOverride(t *testing.T) {
+// TestHandleKey_CtrlROverridesOnlyTheHighlightedProject is the actual
+// workflow requested: stage a batch, lock it to latest SemVer via T, then
+// move the cursor to individual projects that need something else and
+// ctrl+r just those — one at a time — without disturbing the rest of the
+// staged batch. Unlike T/t/M/Enter, ctrl+r deliberately ignores staging
+// entirely and always targets whatever's highlighted.
+func TestHandleKey_CtrlROverridesOnlyTheHighlightedProject(t *testing.T) {
 	m := newTestModel(t)
 	m.projectList.SetProjects([]api.Project{
 		{ID: 10, PathWithNamespace: "a/b"},
@@ -192,21 +194,24 @@ func TestHandleKey_CtrlROpensExplorerRefOverride(t *testing.T) {
 	})
 	m.projectList.Selected[10] = true
 	m.projectList.Selected[11] = true
+	m.projectList.SetLockedRef(10, "v1.0.0")
+	m.projectList.SetLockedRef(11, "v1.0.0") // both already locked, as if by T
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	// Move the highlight to project 11 without touching staging.
+	updated, _ := m.Update(runeKey('j'))
 	mm := updated.(Model)
+
+	updated, cmd := mm.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	mm = updated.(Model)
 	if cmd == nil {
-		t.Fatal("expected a Cmd fetching branches+tags for the first staged project")
-	}
-	if mm.genRefPicker == 0 {
-		t.Fatal("expected genRefPicker to be set")
+		t.Fatal("expected a Cmd fetching branches+tags for the highlighted project")
 	}
 	if mm.refPickerFor != refPickerForExplorer {
 		t.Fatalf("expected refPickerFor=refPickerForExplorer, got %v", mm.refPickerFor)
 	}
 
 	updated, _ = mm.Update(refPickerLoadedMsg{
-		reqID: mm.genRefPicker, projectID: 10,
+		reqID: mm.genRefPicker, projectID: 11,
 		refs: []api.Ref{{Name: "main"}, {Name: "hotfix/urgent"}},
 	})
 	mm = updated.(Model)
@@ -218,12 +223,15 @@ func TestHandleKey_CtrlROpensExplorerRefOverride(t *testing.T) {
 
 	pl, _ := mm.projectList.Update(runeKey('j')) // move to hotfix/urgent
 	pl, _ = pl.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if pl.LockedRef[10] != "hotfix/urgent" || pl.LockedRef[11] != "hotfix/urgent" {
-		t.Fatalf("expected both staged projects locked to hotfix/urgent, got %+v", pl.LockedRef)
+	if pl.LockedRef[11] != "hotfix/urgent" {
+		t.Fatalf("expected the highlighted project (11) overridden, got %+v", pl.LockedRef)
+	}
+	if pl.LockedRef[10] != "v1.0.0" {
+		t.Fatalf("expected the other staged project (10) untouched by the override, got %+v", pl.LockedRef)
 	}
 }
 
-func TestHandleKey_CtrlRWithNoProjectSelectedShowsStatus(t *testing.T) {
+func TestHandleKey_CtrlRWithNothingHighlightedShowsStatus(t *testing.T) {
 	m := newTestModel(t)
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
 	mm := updated.(Model)

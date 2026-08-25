@@ -193,11 +193,14 @@ func (p *ProjectList) HasTextFocus() bool {
 	return p.mode != modeBrowse
 }
 
-// PrepareRefOverride records which projects a ref-picker selection will
+// PrepareRefOverride records which project(s) a ref-picker selection will
 // apply to, ahead of the async fetch that supplies the ref list itself
-// (OpenRefOverridePicker) — mirrors the "staged, or highlighted" batch
-// convention used everywhere else, so overriding several staged projects
-// to the same ref works in one pick, same as T/t.
+// (OpenRefOverridePicker). Takes a slice rather than a single ID so the
+// underlying apply-on-select mechanism doesn't care how the caller chose
+// its targets — but the explorer's ctrl+r (dispatch.go) deliberately
+// passes just the highlighted project, not "staged, or highlighted" like
+// T/t: the point of ctrl+r is overriding one repo without disturbing a
+// staged batch that's already locked to something else.
 func (p *ProjectList) PrepareRefOverride(projectIDs []int) {
 	p.refPickerTarget = projectIDs
 }
