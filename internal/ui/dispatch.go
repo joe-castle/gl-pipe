@@ -582,6 +582,33 @@ func (m Model) applyConfigChange(msg components.ConfigChangedMsg) (tea.Model, te
 	return m, saveConfigCmd(m.cfg, m.configPath)
 }
 
+// savePreset stores the trigger modal's current contents as a named,
+// runnable preset — the projects it was about to fire at, the ref, and the
+// variables as typed — so the same fan-out is one keystroke from <Space> v
+// next time.
+func (m Model) savePreset(msg components.SavePresetMsg) (tea.Model, tea.Cmd) {
+	if msg.Name == "" {
+		return m, nil
+	}
+	vars := make(map[string]string, len(msg.Vars))
+	for _, v := range msg.Vars {
+		if v.Key == "" {
+			continue
+		}
+		vars[v.Key] = v.Value
+	}
+	if len(vars) == 0 {
+		vars = nil
+	}
+	m.cfg.SetPreset(msg.Name, config.Preset{
+		Ref:       msg.Ref,
+		Projects:  msg.Projects,
+		Variables: vars,
+	})
+	m.setStatus(fmt.Sprintf("saved preset %q (%d project(s), %d variable(s)) — <space> v to run it", msg.Name, len(msg.Projects), len(vars)))
+	return m, saveConfigCmd(m.cfg, m.configPath)
+}
+
 // presetEntries flattens the configured presets into the picker's view
 // model, in sorted name order.
 func (m Model) presetEntries() []components.PresetEntry {

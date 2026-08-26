@@ -786,6 +786,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case components.ConfigChangedMsg:
 		return m.applyConfigChange(msg)
 
+	case components.SavePresetMsg:
+		return m.savePreset(msg)
+
 	case components.LeaderActionMsg:
 		return m.handleLeaderAction(msg.Key)
 

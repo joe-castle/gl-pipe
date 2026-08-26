@@ -2,6 +2,7 @@ package components
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -26,12 +27,26 @@ type RefPickerRequestMsg struct {
 	ProjectID int
 }
 
+// SavePresetMsg asks the root model to store the trigger modal's current
+// contents — staged projects, ref, variables — as a named preset, so the
+// same fan-out can be fired later in one keystroke from <Space> v. This is
+// the primary way a runnable preset gets created: the projects are already
+// staged and the variables already typed, so naming it is the only step
+// left.
+type SavePresetMsg struct {
+	Name     string
+	Projects []string // path_with_namespace, matching config.Preset.Projects
+	Ref      string
+	Vars     []api.Variable
+}
+
 type varEditState int
 
 const (
 	varEditNone varEditState = iota
 	varEditKey
 	varEditValue
+	varEditPresetName
 )
 
 // Variables is the pipeline trigger modal: ref picker + an interactive
@@ -43,11 +58,12 @@ type Variables struct {
 	Ref      string
 	RefInput textinput.Model
 
-	rows       []api.Variable
-	table      table.Model
-	editing    varEditState
-	keyInput   textinput.Model
-	valueInput textinput.Model
+	rows        []api.Variable
+	table       table.Model
+	editing     varEditState
+	keyInput    textinput.Model
+	valueInput  textinput.Model
+	presetInput textinput.Model
 
 	focusRef bool
 
@@ -67,6 +83,10 @@ func NewVariables() Variables {
 	val.Prompt = "value: "
 	val.Width = 40
 
+	preset := textinput.New()
+	preset.Prompt = "save as preset: "
+	preset.Width = 30
+
 	cols := []table.Column{
 		{Title: "KEY", Width: 24},
 		{Title: "VALUE", Width: 24},
@@ -76,7 +96,7 @@ func NewVariables() Variables {
 	}
 	tbl := table.New(table.WithColumns(cols), table.WithFocused(true), table.WithHeight(10), table.WithStyles(TableStyles()))
 
-	return Variables{RefInput: ref, keyInput: key, valueInput: val, table: tbl}
+	return Variables{RefInput: ref, keyInput: key, valueInput: val, presetInput: preset, table: tbl}
 }
 
 // Open activates the modal for the given staged projects with a starting
@@ -146,6 +166,9 @@ func (v Variables) Update(msg tea.Msg) (Variables, tea.Cmd) {
 	if v.refPicker.active {
 		return v.updateRefPicker(msg)
 	}
+	if v.editing == varEditPresetName {
+		return v.updatePresetName(msg)
+	}
 	if v.editing != varEditNone {
 		return v.updateEditing(msg)
 	}
@@ -211,6 +234,11 @@ func (v Variables) Update(msg tea.Msg) (Variables, tea.Cmd) {
 				v.syncRows()
 			}
 			return v, nil
+		case "s":
+			v.editing = varEditPresetName
+			v.presetInput.SetValue("")
+			v.presetInput.Focus()
+			return v, nil
 		case "enter":
 			if v.isDispatchRow() {
 				v.Active = false
@@ -236,6 +264,40 @@ func (v Variables) updateRefPicker(msg tea.Msg) (Variables, tea.Cmd) {
 		v.RefInput.SetValue(v.Ref)
 	}
 	return v, nil
+}
+
+// updatePresetName runs the "save this trigger as a preset" name prompt.
+// Saving deliberately leaves the modal open: naming a preset is a
+// bookkeeping step, not a decision to fire, so the user still chooses
+// whether to dispatch afterwards.
+func (v Variables) updatePresetName(msg tea.Msg) (Variables, tea.Cmd) {
+	if km, ok := msg.(tea.KeyMsg); ok {
+		switch km.String() {
+		case "esc":
+			v.editing = varEditNone
+			v.presetInput.Blur()
+			return v, nil
+		case "enter":
+			name := strings.TrimSpace(v.presetInput.Value())
+			if name == "" {
+				return v, nil
+			}
+			v.editing = varEditNone
+			v.presetInput.Blur()
+			paths := make([]string, 0, len(v.Projects))
+			for _, p := range v.Projects {
+				paths = append(paths, p.PathWithNamespace)
+			}
+			vars := append([]api.Variable(nil), v.rows...)
+			ref := v.Ref
+			return v, func() tea.Msg {
+				return SavePresetMsg{Name: name, Projects: paths, Ref: ref, Vars: vars}
+			}
+		}
+	}
+	var cmd tea.Cmd
+	v.presetInput, cmd = v.presetInput.Update(msg)
+	return v, cmd
 }
 
 func (v Variables) startEdit(field varEditState) Variables {
@@ -291,10 +353,13 @@ func (v Variables) View() string {
 	var b string
 	b += v.RefInput.View() + "\n\n"
 	b += v.table.View() + "\n"
-	if v.editing == varEditKey {
+	switch v.editing {
+	case varEditKey:
 		b += "\n" + v.keyInput.View()
-	} else if v.editing == varEditValue {
+	case varEditValue:
 		b += "\n" + v.valueInput.View()
+	case varEditPresetName:
+		b += "\n" + v.presetInput.View()
 	}
 	b += "\n\n" + RenderHelp(
 		[2]string{"a", "add"},
@@ -304,6 +369,7 @@ func (v Variables) View() string {
 		[2]string{"p", "protected"},
 		[2]string{"tab", "ref/rows"},
 		[2]string{"ctrl+r", "browse refs"},
+		[2]string{"s", "save as preset"},
 		[2]string{"enter", "edit/dispatch"},
 		[2]string{"esc", "cancel"},
 	)

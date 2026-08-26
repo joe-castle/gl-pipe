@@ -161,3 +161,78 @@ func TestLeaderV_OpensThePresetListWithConfiguredPresets(t *testing.T) {
 		t.Errorf("preset list missing the configured preset:\n%s", mm.presets.View())
 	}
 }
+
+// TestSavePreset_StoresARunnablePresetFromTheTriggerModal closes the loop:
+// what you just staged and typed becomes a preset you can fire in one key.
+func TestSavePreset_StoresARunnablePresetFromTheTriggerModal(t *testing.T) {
+	m := modelWithProjects(t, presetProjects...)
+
+	updated, cmd := m.Update(components.SavePresetMsg{
+		Name:     "nightly",
+		Projects: []string{"backend/api", "backend/worker"},
+		Ref:      "release/1.2",
+		Vars:     []api.Variable{{Key: "DEPLOY_ENV", Value: "prod", Type: api.VarTypeEnv}},
+	})
+	mm := updated.(Model)
+	if cmd == nil {
+		t.Fatal("saving a preset should persist the config")
+	}
+
+	p, ok := mm.cfg.Presets["nightly"]
+	if !ok {
+		t.Fatalf("preset not stored: %+v", mm.cfg.Presets)
+	}
+	if !p.Runnable() {
+		t.Error("a preset captured from the trigger modal should be runnable")
+	}
+	if p.Ref != "release/1.2" || len(p.Projects) != 2 || p.Variables["DEPLOY_ENV"] != "prod" {
+		t.Errorf("preset = %+v", p)
+	}
+	if !strings.Contains(mm.statusMsg, "nightly") {
+		t.Errorf("status = %q, want it to confirm the save", mm.statusMsg)
+	}
+}
+
+// TestSavePreset_SkipsBlankVariableRows guards the half-typed row the
+// trigger modal leaves behind when 'a' adds a row that never gets a key.
+func TestSavePreset_SkipsBlankVariableRows(t *testing.T) {
+	m := modelWithProjects(t, presetProjects...)
+
+	updated, _ := m.Update(components.SavePresetMsg{
+		Name:     "sparse",
+		Projects: []string{"backend/api"},
+		Vars:     []api.Variable{{Key: "", Value: ""}, {Key: "OK", Value: "1"}},
+	})
+	mm := updated.(Model)
+
+	vars := mm.cfg.Presets["sparse"].Variables
+	if len(vars) != 1 || vars["OK"] != "1" {
+		t.Fatalf("Variables = %+v, want only the named row", vars)
+	}
+}
+
+// TestConfigSaveErrorSurfacesInTheStatusBar: a failed write from the
+// settings editor used to be reported into the wizard, which isn't on
+// screen once the app is running.
+func TestConfigSaveErrorSurfacesInTheStatusBar(t *testing.T) {
+	m := newTestModel(t)
+	updated, cmd := m.Update(configSavedMsg{err: errBoom})
+	mm := updated.(Model)
+	if cmd != nil {
+		t.Error("a save result should not trigger further work in the main view")
+	}
+	if !mm.statusErr || !strings.Contains(mm.statusMsg, "boom") {
+		t.Errorf("status = %q (err=%v), want the save failure reported", mm.statusMsg, mm.statusErr)
+	}
+}
+
+// TestConfigSaved_DoesNotResyncOutsideTheWizard: every config write (an
+// instance switch, a group merge, any settings edit) used to re-run
+// initInstance and a full project resync.
+func TestConfigSaved_DoesNotResyncOutsideTheWizard(t *testing.T) {
+	m := modelWithProjects(t, presetProjects...)
+	_, cmd := m.Update(configSavedMsg{})
+	if cmd != nil {
+		t.Error("a successful save in the main view should not kick off a resync")
+	}
+}

@@ -48,9 +48,9 @@ var LeaderActions = []LeaderAction{
 	{Key: "f", Label: "blob search filter"},
 	{Key: "b", Label: "search pipelines by ref"},
 	{Key: "m", Label: "my merge requests"},
-	{Key: "v", Label: "variable preset"},
+	{Key: "v", Label: "presets (run / select)"},
 	{Key: "g", Label: "discover groups"},
-	{Key: "s", Label: "settings / instances"},
+	{Key: "s", Label: "settings / config editor"},
 	{Key: "o", Label: "open in browser"},
 	{Key: "r", Label: "force refresh"},
 	{Key: "q", Label: "quit"},
@@ -81,4 +81,5 @@ var (
 	KeyToggleVarType   = key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "toggle env/file"))
 	KeyToggleMasked    = key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "toggle masked"))
 	KeyToggleProtected = key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "toggle protected"))
+	KeySaveAsPreset    = key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "save as preset"))
 )

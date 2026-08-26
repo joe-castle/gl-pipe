@@ -64,17 +64,26 @@ cache:
 pipelines:
   max_age_days: 90                 # optional — omit for no cap (see below)
 presets:
-  deploy_dev:
+  deploy_dev:                        # variables only — prefills the next trigger
     variables:
       DEPLOY_ENV: "development"
       SKIP_SMOKE_TESTS: "false"
+  nightly_smoke:                     # runnable — <Space> v, Enter, done
+    ref: "main"
+    projects:
+      - "core-services/api"
+      - "core-services/worker"
+    variables:
+      DEPLOY_ENV: "staging"
 ```
+
+Everything above is editable inside the app — press `<Space> s`. Hand-editing `config.yaml` still works; the in-app editor writes the same file.
 
 A token can be a literal PAT, an `${ENV_VAR}` reference expanded at load time, or a `token_command: <shell command>` whose stdout is used as the token (e.g. to pull from a password manager). `token_command` takes precedence over `token` when both are set. The config file itself is written with owner-only (`0600`) permissions.
 
 The project explorer only syncs projects from an instance's `default_groups` — there's no unscoped "list every project on the instance" mode, to keep sync fast and predictable on large instances. You don't have to hand-type these: press `<Space> g` to fetch every group you're a member of and multi-select the ones you want (`x` to toggle, `Enter` on the `[ Save ]` row) — selections are merged into `default_groups` and gl-pipe resyncs immediately. If an instance has no `default_groups` configured yet, the status bar says so explicitly and points you at `<Space> g`.
 
-`pipelines.max_age_days` caps how far back a pipeline query looks (viewing staged projects' pipelines, or a `<Space> b` ref search) — pipelines created before the cutoff are excluded server-side by GitLab (`created_after`), not just hidden client-side, so a large/old project's history doesn't slow down every load. Unset (the default) means no cap, same behavior as before this existed. There's no in-app editor for this yet — same as the cache TTL, edit `config.yaml` directly and restart.
+`pipelines.max_age_days` caps how far back a pipeline query looks (viewing staged projects' pipelines, or a `<Space> b` ref search) — pipelines created before the cutoff are excluded server-side by GitLab (`created_after`), not just hidden client-side, so a large/old project's history doesn't slow down every load. Unset (the default) means no cap, same behavior as before this existed. Editable in-app via `<Space> s`.
 
 ## Keyboard shortcuts
 
@@ -102,9 +111,9 @@ The project explorer only syncs projects from an instance's `default_groups` —
 | `f` | Open the blob (code) search filter (group + query in separate fields — see below) |
 | `b` | Search for pipelines by an exact ref across every synced project — no need to know which repo it's in |
 | `m` | Your merge requests (assigned + authored, open) across every synced project |
-| `v` | Pick a variable preset to prefill the next trigger |
+| `v` | Presets — run a saved trigger in one keystroke, or load one into the next trigger modal |
 | `g` | Discover groups you belong to and add some to `default_groups` |
-| `s` | Open settings — switch instance profile, view TTL/presets |
+| `s` | Settings — edit instances, cache TTL, pipeline age cap, and presets in-app |
 | `o` | Open the focused project, pipeline, or job in your browser |
 | `r` | Force refresh — re-sync the project cache from GitLab |
 | `q` | Quit |
@@ -228,10 +237,45 @@ Showing jobs from more than one pipeline adds `Project` and `Pipeline` (`#IID`) 
 | `t` | Toggle the row's type (`env_var` / `file`) |
 | `m` | Toggle `masked` |
 | `p` | Toggle `protected` |
+| `s` | Save this trigger (staged projects + ref + variables) as a named preset |
 | `Enter` | Edit a row's key/value, or dispatch on the `[ Dispatch ]` row |
 | `Esc` | Cancel without dispatching (or, in the ref browser, close it without changing the ref) |
 
 `Ctrl+r` fetches branches and tags for the *first* staged project — the ref field is shared across every project in a batch trigger, so with multiple projects staged the picker reflects only one of them; if the others differ, type the ref manually or lock each project's ref individually (`T`) before opening the trigger modal.
+
+`s` is how runnable presets get made: stage the repos, set the ref and variables you want, then name it — the modal stays open afterwards, so you can still dispatch this run too. From then on `<Space> v` → `Enter` fires the same thing.
+
+### Presets (`<Space> v`)
+
+| Key | Action |
+|---|---|
+| `Enter` | Run the preset now — its own projects, its own ref, its own variables, no modal. (A preset with no projects is *selected* instead, prefilling the next trigger.) |
+| `c` | Select rather than run: load the preset into the next `<Space> p` trigger modal so you can tweak it first |
+| `Esc` | Cancel |
+
+Two kinds of preset live here, and the `PROJECTS` column tells them apart:
+
+- **Runnable** — names its own `projects` (and optionally a `ref`). `Enter` dispatches immediately to every one of them. This is the "one tap" path: no staging, no modal, no confirmation. The highlighted row spells out exactly which repos and variables it will use before you press it.
+- **Variables only** — the original preset shape. There's nothing to run it against, so `Enter` just remembers it, and the next `<Space> p` (against whatever you've staged in the explorer) starts prefilled with its variables and ref.
+
+A preset's projects are stored as paths (`core-services/api`), resolved against the synced project cache when it runs. If a path no longer resolves — repo renamed, moved out of `default_groups`, or a stale cache — the rest of the preset still runs and the status line names what was skipped; `<Space> r` resyncs. A preset's own ref always wins: unlike `<Space> p`, an explorer ref lock (`T`/`t`/`Ctrl+r`) does **not** override it, since a preset is meant to mean the same thing every time you fire it. A preset with no `ref` uses each project's default branch.
+
+### Settings (`<Space> s`)
+
+| Key | Action |
+|---|---|
+| `Enter` | Switch to the highlighted instance — or, on any other row, edit it |
+| `e` | Edit the highlighted row (instance, TTL, pipeline age cap, or preset) |
+| `d` | Delete the highlighted instance or preset (asks to confirm) |
+| `Tab` | Next field, inside an editor |
+| `Enter` | Save, inside an editor |
+| `Esc` | Cancel the editor, or close settings from the list |
+
+Everything in `config.yaml` except `default_groups` is editable here, and each change is written to disk as you make it — no restart. Editing an instance's URL or token (or switching/deleting instances) rebuilds the API client and reloads that instance's project cache immediately. `default_groups` is deliberately not edited by hand here: `<Space> g` fetches your real groups and multi-selects them, which is both faster and less error-prone than typing paths. (Both edit the same field, so a group added in `<Space> g` shows up in the instance's detail line here.)
+
+A preset's projects and variables are edited as comma-separated text (`backend/api, backend/worker` and `DEPLOY_ENV=prod, DRY_RUN=false`) rather than as sub-lists with their own editor — for anything longer than a couple of entries it's easier to stage the repos in the explorer and capture the whole trigger with `s` in the trigger modal.
+
+Tokens are masked in the settings list (`token: ••••••`) but shown in full while you're editing one, since you can't meaningfully edit what you can't see. `${ENV_VAR}` and `token_command` values are shown as written — those are the indirection, not the secret — and editing writes the raw string back, so token indirection survives a round-trip through the editor.
 
 ### Log viewer
 

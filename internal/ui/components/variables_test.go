@@ -150,3 +150,77 @@ func TestVariables_EscClosesWithoutDispatching(t *testing.T) {
 		t.Fatal("esc should not emit a DispatchMsg")
 	}
 }
+
+// TestVariables_SavesTheStagedTriggerAsAPreset is how a runnable preset
+// actually gets created: stage the projects, set the ref and variables you
+// want, then capture the whole thing under a name instead of retyping it
+// into config.yaml.
+func TestVariables_SavesTheStagedTriggerAsAPreset(t *testing.T) {
+	v := NewVariables()
+	v.Open([]api.Project{
+		{ID: 1, PathWithNamespace: "backend/api"},
+		{ID: 2, PathWithNamespace: "backend/worker"},
+	}, "release/1.2", []api.Variable{{Key: "DEPLOY_ENV", Value: "prod", Type: api.VarTypeEnv}})
+
+	updated, _ := v.Update(runeKey('s'))
+	if !updated.HasTextFocus() {
+		t.Fatal("the preset-name prompt must own keystrokes while open")
+	}
+	for _, r := range "nightly" {
+		updated, _ = updated.Update(runeKey(r))
+	}
+	updated, cmd := updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("naming a preset emitted no command")
+	}
+	msg, ok := cmd().(SavePresetMsg)
+	if !ok {
+		t.Fatalf("emitted %T, want SavePresetMsg", cmd())
+	}
+	if msg.Name != "nightly" {
+		t.Errorf("Name = %q", msg.Name)
+	}
+	if msg.Ref != "release/1.2" {
+		t.Errorf("Ref = %q", msg.Ref)
+	}
+	if len(msg.Projects) != 2 || msg.Projects[0] != "backend/api" || msg.Projects[1] != "backend/worker" {
+		t.Errorf("Projects = %+v, want the staged projects by path", msg.Projects)
+	}
+	if len(msg.Vars) != 1 || msg.Vars[0].Key != "DEPLOY_ENV" {
+		t.Errorf("Vars = %+v", msg.Vars)
+	}
+	if !updated.Active {
+		t.Error("saving a preset should leave the trigger modal open, not dispatch")
+	}
+	if updated.HasTextFocus() {
+		t.Error("the prompt should close after saving")
+	}
+}
+
+func TestVariables_EscCancelsThePresetNamePrompt(t *testing.T) {
+	v := NewVariables()
+	v.Open(nil, "main", nil)
+
+	updated, _ := v.Update(runeKey('s'))
+	updated, cmd := updated.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil {
+		t.Fatalf("esc emitted %T, want nothing", cmd())
+	}
+	if updated.HasTextFocus() {
+		t.Error("esc should close the prompt")
+	}
+	if !updated.Active {
+		t.Error("esc in the prompt should not close the whole trigger modal")
+	}
+}
+
+func TestVariables_EmptyPresetNameIsRejected(t *testing.T) {
+	v := NewVariables()
+	v.Open(nil, "main", nil)
+
+	updated, _ := v.Update(runeKey('s'))
+	_, cmd := updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("an unnamed preset emitted %T, want nothing", cmd())
+	}
+}
