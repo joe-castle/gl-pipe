@@ -89,7 +89,7 @@ type Model struct {
 	logViewer    components.LogViewer
 	settings     components.Settings
 	leaderMenu   components.LeaderMenu
-	presets      presetPicker
+	presets      components.PresetList
 	groupPicker  components.GroupPicker
 	refSearch    refSearch
 	mrList       components.MRList
@@ -161,6 +161,11 @@ type Model struct {
 	// result has to open a different overlay depending on which asked.
 	refPickerFor refPickerSource
 
+	// chosenPreset is the preset most recently selected (not run) from the
+	// <Space> v picker: the next trigger modal prefills its variables and
+	// ref. Runnable presets bypass this entirely — they dispatch directly.
+	chosenPreset string
+
 	statusMsg string
 	statusErr bool
 	loading   bool
@@ -202,6 +207,7 @@ func New(ctx context.Context, cancel context.CancelFunc, cfg *config.Config, con
 		logViewer:    components.NewLogViewer(),
 		settings:     components.NewSettings(),
 		leaderMenu:   components.NewLeaderMenu(toComponentActions(LeaderActions)),
+		presets:      components.NewPresetList(),
 		groupPicker:  components.NewGroupPicker(),
 		refSearch:    newRefSearch(),
 		mrList:       components.NewMRList(),
@@ -422,13 +428,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, saveConfigCmd(m.cfg, m.configPath)
 
 	case configSavedMsg:
-		if msg.err != nil {
-			m.wizard.SetError(msg.err)
-			return m, nil
+		// Only the wizard's very first save graduates into the main view
+		// and kicks off the initial sync. Every later save — an instance
+		// switch, the group picker, the settings editor — is a background
+		// write against an already-running app, and re-running
+		// initInstance/syncProjects for each of those would resync the
+		// whole project list every time a setting is nudged.
+		if m.view == viewWizard {
+			if msg.err != nil {
+				m.wizard.SetError(msg.err)
+				return m, nil
+			}
+			m.view = viewMain
+			m.initInstance()
+			return m, m.syncProjectsCmd()
 		}
-		m.view = viewMain
-		m.initInstance()
-		return m, m.syncProjectsCmd()
+		if msg.err != nil {
+			m.setErr(fmt.Errorf("saving config: %w", msg.err))
+		}
+		return m, nil
 
 	case projectsSyncedMsg:
 		if msg.reqID != m.genProjects {
@@ -755,10 +773,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setStatus("switched to instance " + msg.Name)
 		return m, saveConfigCmd(m.cfg, m.configPath)
 
-	case presetChosenMsg:
+	case components.PresetChosenMsg:
 		m.presets.Active = false
-		m.setStatus("preset " + msg.name + " selected — <space> p to trigger")
+		m.chosenPreset = msg.Name
+		m.setStatus("preset " + msg.Name + " selected — <space> p to trigger")
 		return m, nil
+
+	case components.RunPresetMsg:
+		m.presets.Active = false
+		return m.runPreset(msg.Name)
+
+	case components.ConfigChangedMsg:
+		return m.applyConfigChange(msg)
 
 	case components.LeaderActionMsg:
 		return m.handleLeaderAction(msg.Key)

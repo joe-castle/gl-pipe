@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/joeca/gl-pipe/internal/api"
+	"github.com/joeca/gl-pipe/internal/config"
 	"github.com/joeca/gl-pipe/internal/ui/components"
 )
 
@@ -141,12 +142,10 @@ func (m Model) handleLeaderAction(key string) (tea.Model, tea.Cmd) {
 			ref = "main"
 		}
 		var preset []api.Variable
-		if m.presets.chosen != "" {
-			if p, ok := m.cfg.Presets[m.presets.chosen]; ok {
-				for k, v := range p.Variables {
-					preset = append(preset, api.Variable{Key: k, Value: v, Type: api.VarTypeEnv})
-				}
-				sort.Slice(preset, func(i, j int) bool { return preset[i].Key < preset[j].Key })
+		if p, ok := m.cfg.Presets[m.chosenPreset]; ok && m.chosenPreset != "" {
+			preset = presetVars(p)
+			if p.Ref != "" {
+				ref = p.Ref
 			}
 		}
 		m.variables.Open(projects, ref, preset)
@@ -176,21 +175,11 @@ func (m Model) handleLeaderAction(key string) (tea.Model, tea.Cmd) {
 		return m, loadMyMRsCmd(m.ctx, m.client, id)
 
 	case "v":
-		names := make([]string, 0, len(m.cfg.Presets))
-		for name := range m.cfg.Presets {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		m.presets.Open(names)
+		m.presets.Open(m.presetEntries())
 		return m, nil
 
 	case "s":
-		names := sortedKeys(m.cfg.Instances)
-		presetNames := make([]string, 0, len(m.cfg.Presets))
-		for name := range m.cfg.Presets {
-			presetNames = append(presetNames, name)
-		}
-		m.settings.Open(names, m.cfg.CurrentInstance, m.cfg.TTL(), presetNames)
+		m.settings.Open(m.cfg)
 		return m, nil
 
 	case "o":
@@ -579,69 +568,117 @@ func (m Model) bulkJobAction(msg components.BulkJobActionMsg) (tea.Model, tea.Cm
 	return m, tea.Batch(cmds...)
 }
 
-// presetChosenMsg is emitted when the user picks a variable preset from the
-// <Space> v picker; the next <Space> p trigger will prefill from it.
-type presetChosenMsg struct {
-	name string
+// applyConfigChange persists an edit made in the settings screen and, when
+// it touched the active connection (URL, token, or the instance set
+// itself), rebuilds the API client and project cache so the change takes
+// effect without a restart — the whole point of backlog 031.
+func (m Model) applyConfigChange(msg components.ConfigChangedMsg) (tea.Model, tea.Cmd) {
+	if msg.ReloadInstance {
+		m.initInstance()
+	}
+	if msg.Reason != "" {
+		m.setStatus(msg.Reason)
+	}
+	return m, saveConfigCmd(m.cfg, m.configPath)
 }
 
-// presetPicker is a minimal <Space> v modal: a plain list of preset names.
-// It's small enough to keep inline here rather than as its own component.
-type presetPicker struct {
-	Active bool
-	Names  []string
-	cursor int
-	chosen string
+// presetEntries flattens the configured presets into the picker's view
+// model, in sorted name order.
+func (m Model) presetEntries() []components.PresetEntry {
+	names := m.cfg.PresetNames()
+	out := make([]components.PresetEntry, 0, len(names))
+	for _, name := range names {
+		p := m.cfg.Presets[name]
+		out = append(out, components.PresetEntry{
+			Name:     name,
+			Ref:      p.Ref,
+			Projects: p.Projects,
+			Vars:     presetVars(p),
+		})
+	}
+	return out
 }
 
-func (p *presetPicker) Open(names []string) {
-	p.Active = true
-	p.Names = names
-	p.cursor = 0
+// presetVars renders a preset's variable map as sorted api.Variables — the
+// map is unordered, and both the trigger modal and a preset run need a
+// stable order to display and dispatch.
+func presetVars(p config.Preset) []api.Variable {
+	vars := make([]api.Variable, 0, len(p.Variables))
+	for k, v := range p.Variables {
+		vars = append(vars, api.Variable{Key: k, Value: v, Type: api.VarTypeEnv})
+	}
+	sort.Slice(vars, func(i, j int) bool { return vars[i].Key < vars[j].Key })
+	return vars
 }
 
-func (p presetPicker) Update(msg tea.Msg) (presetPicker, tea.Cmd) {
-	km, ok := msg.(tea.KeyMsg)
+// presetTargets resolves a preset's path_with_namespace entries against the
+// synced project cache, returning the projects it found (in the preset's own
+// order) and the paths it couldn't. A miss is reported, not fatal: one repo
+// renamed or moved out of default_groups must not block the rest of a
+// preset that's otherwise fine.
+func (m Model) presetTargets(p config.Preset) (found []api.Project, missing []string) {
+	byPath := make(map[string]api.Project, len(m.cacheIdx.Projects))
+	for _, proj := range m.cacheIdx.Projects {
+		byPath[proj.PathWithNamespace] = proj
+	}
+	for _, path := range p.Projects {
+		if proj, ok := byPath[path]; ok {
+			found = append(found, proj)
+			continue
+		}
+		missing = append(missing, path)
+	}
+	return found, missing
+}
+
+// presetRefFor picks the ref one project in a preset run is triggered on:
+// the preset's own ref if it names one, otherwise that project's default
+// branch. A preset is self-contained by design — the explorer's T/t/ctrl+r
+// ref locks deliberately do *not* override it, unlike a <Space> p dispatch,
+// where the lock is the whole point.
+func presetRefFor(p config.Preset, proj api.Project) string {
+	if p.Ref != "" {
+		return p.Ref
+	}
+	if proj.DefaultBranch != "" {
+		return proj.DefaultBranch
+	}
+	return "main"
+}
+
+// runPreset fires a runnable preset in one keystroke: its own projects, its
+// own ref, its own variables, no trigger modal in between.
+func (m Model) runPreset(name string) (tea.Model, tea.Cmd) {
+	p, ok := m.cfg.Presets[name]
 	if !ok {
-		return p, nil
+		m.setErr(fmt.Errorf("preset %q is not configured", name))
+		return m, nil
 	}
-	switch km.String() {
-	case "esc":
-		p.Active = false
-	case "j", "down":
-		if p.cursor < len(p.Names)-1 {
-			p.cursor++
-		}
-	case "k", "up":
-		if p.cursor > 0 {
-			p.cursor--
-		}
-	case "enter":
-		if p.cursor < len(p.Names) {
-			name := p.Names[p.cursor]
-			p.chosen = name
-			p.Active = false
-			return p, func() tea.Msg { return presetChosenMsg{name: name} }
-		}
+	if !p.Runnable() {
+		m.setErr(fmt.Errorf("preset %q names no projects — select it and use <space> p instead", name))
+		return m, nil
 	}
-	return p, nil
-}
 
-func (p presetPicker) View() string {
-	var b strings.Builder
-	b.WriteString("Select a variable preset:\n\n")
-	for i, n := range p.Names {
-		marker := "  "
-		if i == p.cursor {
-			marker = "> "
-		}
-		b.WriteString(marker + n + "\n")
+	found, missing := m.presetTargets(p)
+	if len(found) == 0 {
+		m.setErr(fmt.Errorf("preset %q: none of its %d project(s) are in the synced cache — <space> r to resync", name, len(p.Projects)))
+		return m, nil
 	}
-	if len(p.Names) == 0 {
-		b.WriteString("(no presets configured in config.yaml)\n")
+
+	vars := presetVars(p)
+	cmds := make([]tea.Cmd, 0, len(found))
+	for _, proj := range found {
+		id := m.newReqID()
+		cmds = append(cmds, createPipelineCmd(m.ctx, m.client, proj.ID, presetRefFor(p, proj), vars, id))
 	}
-	b.WriteString("\nj/k: move · enter: choose · esc: cancel")
-	return b.String()
+
+	status := fmt.Sprintf("running preset %q on %d project(s)", name, len(found))
+	if len(missing) > 0 {
+		status += fmt.Sprintf(" — skipped %d not in cache: %s", len(missing), strings.Join(missing, ", "))
+	}
+	m.setStatus(status)
+	m.loading = true
+	return m, tea.Batch(cmds...)
 }
 
 // refSearchSubmitMsg is emitted when the user submits a ref to search for.

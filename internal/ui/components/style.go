@@ -22,8 +22,9 @@ var (
 	colorCanceled = lipgloss.Color("244")
 	colorManual   = lipgloss.Color("135")
 
-	helpKeyStyle  = lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
-	helpDescStyle = lipgloss.NewStyle().Foreground(colorMuted)
+	helpKeyStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
+	helpDescStyle  = lipgloss.NewStyle().Foreground(colorMuted)
+	errorTextStyle = lipgloss.NewStyle().Foreground(colorFailed)
 )
 
 // TableStyles is the shared k9s-flavored skin for every table in the app:
