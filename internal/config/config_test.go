@@ -192,6 +192,156 @@ func TestPipelineMaxAge_UsesConfiguredDays(t *testing.T) {
 	}
 }
 
+// TestLoad_ParsesRunPreset covers backlog 032: a preset may now carry the
+// projects and ref to run against, not just variables, so it can be fired
+// in one keystroke.
+func TestLoad_ParsesRunPreset(t *testing.T) {
+	withRun := `
+current_instance: work
+instances:
+  work:
+    url: "https://gitlab.com"
+    token: "x"
+presets:
+  nightly:
+    ref: "main"
+    projects: ["backend/api", "backend/worker"]
+    variables:
+      DEPLOY_ENV: "dev"
+`
+	cfg, err := Load(writeTemp(t, "config.yaml", withRun))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	p := cfg.Presets["nightly"]
+	if p.Ref != "main" {
+		t.Errorf("Ref = %q, want main", p.Ref)
+	}
+	if len(p.Projects) != 2 || p.Projects[0] != "backend/api" {
+		t.Errorf("Projects = %+v", p.Projects)
+	}
+	if p.Variables["DEPLOY_ENV"] != "dev" {
+		t.Errorf("Variables = %+v", p.Variables)
+	}
+}
+
+// TestLoad_VariableOnlyPresetStillParses guards backward compatibility: the
+// pre-032 preset shape (variables only, no projects/ref) must keep working
+// for anyone with an existing config.yaml.
+func TestLoad_VariableOnlyPresetStillParses(t *testing.T) {
+	cfg, err := Load(writeTemp(t, "config.yaml", validYAML))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	p := cfg.Presets["deploy_dev"]
+	if p.Variables["DEPLOY_ENV"] != "development" {
+		t.Errorf("Variables = %+v", p.Variables)
+	}
+	if p.Ref != "" || len(p.Projects) != 0 {
+		t.Errorf("variable-only preset should have empty Ref/Projects, got %+v", p)
+	}
+	if p.Runnable() {
+		t.Error("Runnable() = true for a preset with no projects")
+	}
+}
+
+func TestPreset_RunnableRequiresProjects(t *testing.T) {
+	if !(Preset{Projects: []string{"a/b"}}).Runnable() {
+		t.Error("Runnable() = false for a preset with projects")
+	}
+}
+
+func TestSetPreset_CreatesMapAndRoundTrips(t *testing.T) {
+	cfg := &Config{
+		CurrentInstance: "work",
+		Instances:       map[string]Instance{"work": {URL: "https://gitlab.com"}},
+	}
+	cfg.SetPreset("nightly", Preset{Ref: "main", Projects: []string{"a/b"}})
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := cfg.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Presets["nightly"].Ref != "main" {
+		t.Errorf("preset did not round-trip: %+v", loaded.Presets)
+	}
+}
+
+func TestDeletePreset(t *testing.T) {
+	cfg := &Config{Presets: map[string]Preset{"a": {}, "b": {}}}
+	cfg.DeletePreset("a")
+	if _, ok := cfg.Presets["a"]; ok {
+		t.Error("preset a still present after DeletePreset")
+	}
+	if len(cfg.Presets) != 1 {
+		t.Errorf("len(Presets) = %d, want 1", len(cfg.Presets))
+	}
+}
+
+func TestPresetNames_Sorted(t *testing.T) {
+	cfg := &Config{Presets: map[string]Preset{"zeta": {}, "alpha": {}, "mid": {}}}
+	got := cfg.PresetNames()
+	want := []string{"alpha", "mid", "zeta"}
+	if len(got) != len(want) {
+		t.Fatalf("PresetNames() = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("PresetNames() = %+v, want %+v", got, want)
+		}
+	}
+}
+
+// TestDeleteInstance_RepointsCurrentInstance covers the in-app settings
+// editor (031): deleting the active instance must leave the config valid,
+// not dangling at a current_instance that no longer exists.
+func TestDeleteInstance_RepointsCurrentInstance(t *testing.T) {
+	cfg := &Config{
+		CurrentInstance: "work",
+		Instances: map[string]Instance{
+			"work":     {URL: "https://gitlab.internal"},
+			"personal": {URL: "https://gitlab.com"},
+		},
+	}
+	if err := cfg.DeleteInstance("work"); err != nil {
+		t.Fatalf("DeleteInstance: %v", err)
+	}
+	if cfg.CurrentInstance != "personal" {
+		t.Errorf("CurrentInstance = %q, want personal", cfg.CurrentInstance)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("config invalid after DeleteInstance: %v", err)
+	}
+}
+
+func TestDeleteInstance_RefusesLastInstance(t *testing.T) {
+	cfg := &Config{
+		CurrentInstance: "work",
+		Instances:       map[string]Instance{"work": {URL: "https://gitlab.com"}},
+	}
+	if err := cfg.DeleteInstance("work"); err == nil {
+		t.Fatal("expected error deleting the only instance, got nil")
+	}
+	if len(cfg.Instances) != 1 {
+		t.Errorf("instance was deleted despite the error: %+v", cfg.Instances)
+	}
+}
+
+func TestSetInstance_CreatesMap(t *testing.T) {
+	cfg := &Config{}
+	cfg.SetInstance("work", Instance{URL: "https://gitlab.com"})
+	if cfg.Instances["work"].URL != "https://gitlab.com" {
+		t.Fatalf("Instances = %+v", cfg.Instances)
+	}
+	if cfg.CurrentInstance != "work" {
+		t.Errorf("CurrentInstance = %q, want the first instance added to become current", cfg.CurrentInstance)
+	}
+}
+
 func TestExists(t *testing.T) {
 	path := writeTemp(t, "config.yaml", validYAML)
 	if !Exists(path) {

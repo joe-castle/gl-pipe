@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -49,10 +50,30 @@ type PipelinesConfig struct {
 	MaxAgeDays int `yaml:"max_age_days,omitempty"`
 }
 
-// Preset is a named bundle of pipeline trigger variables.
+// Preset is a named, reusable pipeline trigger.
+//
+// A preset carrying only Variables (the original shape, still valid) is a
+// template: <Space> v selects it and the next trigger modal prefills from
+// it. A preset that also names Projects is *runnable* — <Space> v fires it
+// at those projects on Ref in one keystroke, no modal.
 type Preset struct {
-	Variables map[string]string `yaml:"variables"`
+	Variables map[string]string `yaml:"variables,omitempty"`
+
+	// Projects are path_with_namespace strings ("backend/api"), resolved
+	// against the synced project cache at run time. Paths, not numeric IDs,
+	// so the file stays readable and a preset means the same thing when
+	// pointed at a different instance; a path that no longer resolves is
+	// reported and skipped rather than blocking the rest of the run.
+	Projects []string `yaml:"projects,omitempty"`
+
+	// Ref is the branch/tag to trigger on. Empty means "each project's own
+	// default branch".
+	Ref string `yaml:"ref,omitempty"`
 }
+
+// Runnable reports whether this preset names the projects to fire at, and
+// so can be triggered directly instead of only prefilling the trigger modal.
+func (p Preset) Runnable() bool { return len(p.Projects) > 0 }
 
 // DefaultPath returns the OS-appropriate config file location:
 // ~/.config/gl-pipe/config.yaml or %APPDATA%\gl-pipe\config.yaml.
@@ -137,6 +158,76 @@ func (c *Config) SetActive(name string) error {
 	}
 	c.CurrentInstance = name
 	return nil
+}
+
+// SetInstance adds or replaces an instance profile, creating the map on
+// first use. The first instance added also becomes the current one, so a
+// config built up entirely through the in-app editor is valid without a
+// separate "make this active" step.
+func (c *Config) SetInstance(name string, inst Instance) {
+	if c.Instances == nil {
+		c.Instances = map[string]Instance{}
+	}
+	c.Instances[name] = inst
+	if c.CurrentInstance == "" {
+		c.CurrentInstance = name
+	}
+}
+
+// DeleteInstance removes an instance profile. Deleting the active instance
+// repoints current_instance at whichever remains (first alphabetically), so
+// the config never ends up failing its own Validate; deleting the last
+// instance is refused for the same reason.
+func (c *Config) DeleteInstance(name string) error {
+	if _, ok := c.Instances[name]; !ok {
+		return fmt.Errorf("instance %q not found", name)
+	}
+	if len(c.Instances) == 1 {
+		return fmt.Errorf("cannot delete %q: it is the only instance", name)
+	}
+	delete(c.Instances, name)
+	if c.CurrentInstance == name {
+		remaining := make([]string, 0, len(c.Instances))
+		for n := range c.Instances {
+			remaining = append(remaining, n)
+		}
+		sort.Strings(remaining)
+		c.CurrentInstance = remaining[0]
+	}
+	return nil
+}
+
+// SetPreset adds or replaces a named preset, creating the map on first use.
+func (c *Config) SetPreset(name string, p Preset) {
+	if c.Presets == nil {
+		c.Presets = map[string]Preset{}
+	}
+	c.Presets[name] = p
+}
+
+// DeletePreset removes a named preset.
+func (c *Config) DeletePreset(name string) { delete(c.Presets, name) }
+
+// PresetNames returns every preset name in sorted order, so the picker and
+// settings screen list them in a stable order rather than Go's randomized
+// map iteration.
+func (c *Config) PresetNames() []string {
+	out := make([]string, 0, len(c.Presets))
+	for name := range c.Presets {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// InstanceNames returns every instance profile name in sorted order.
+func (c *Config) InstanceNames() []string {
+	out := make([]string, 0, len(c.Instances))
+	for name := range c.Instances {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // TTL returns the cache TTL, defaulting to 60 minutes when unset.
