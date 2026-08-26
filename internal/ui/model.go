@@ -194,6 +194,11 @@ type Model struct {
 // first-run wizard; otherwise it starts in the main explorer against the
 // config's current instance, using cacheDir for per-instance project caches.
 func New(ctx context.Context, cancel context.CancelFunc, cfg *config.Config, configPath, cacheDir string) Model {
+	// Panic reports live alongside config.yaml and the project caches: the
+	// alt screen swallows anything bubbletea prints on the way down, so a
+	// crash is only diagnosable if it's also on disk (see crashlog.go).
+	SetCrashLog(filepath.Join(cacheDir, "crash.log"))
+
 	m := Model{
 		ctx:          ctx,
 		cancel:       cancel,

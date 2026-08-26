@@ -56,9 +56,29 @@ func main() {
 	model := ui.New(ctx, cancel, cfg, configPath, filepath.Dir(configPath))
 
 	program := tea.NewProgram(model, tea.WithAltScreen())
-	if _, err := program.Run(); err != nil {
-		fatal(err)
+	_, runErr := program.Run()
+
+	// Only now is the terminal back out of the alternate screen, so this is
+	// the first point where a message about a recovered panic is actually
+	// readable — anything printed while the TUI was up went into a buffer
+	// the terminal discards on restore.
+	reportCrashes()
+
+	if runErr != nil {
+		fatal(runErr)
 	}
+}
+
+// reportCrashes points at the crash log if any Cmd panicked during the
+// session. The app stays up through those (internal/ui/crashlog.go), so
+// without this the only trace is a one-line status-bar message the user has
+// probably already scrolled past.
+func reportCrashes() {
+	path, count := ui.CrashReports()
+	if count == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "gl-pipe: recovered from %d internal error(s) this session; details in %s\n", count, path)
 }
 
 func applyOverrides(cfg *config.Config, cli CLI) {
