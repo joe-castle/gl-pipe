@@ -74,9 +74,9 @@ type JobDigest struct {
 }
 
 // digestPanelHeight is how many rows the job table gives up to the digest
-// panel while one exists (a header line, up to 3 digest lines, and the
-// blank line separating it from the table).
-const digestPanelHeight = 5
+// panel while one exists: the blank line above it, the separator rule, the
+// job title, and up to digestLineCount summary lines.
+const digestPanelHeight = 6
 
 // minJobTableHeight is the floor the digest panel may not shrink the job
 // matrix past, so a short terminal degrades instead of showing no rows.
@@ -865,25 +865,41 @@ func (p PipelineList) digestPanel() string {
 	if !ok {
 		return ""
 	}
+
+	// The panel sits directly above the help line and, with a part-empty
+	// matrix, a long way below the row it describes. Rendering it in
+	// helpDescStyle (as this first did) made a working digest read as more
+	// help text — reported as "I see nothing underneath". A rule separates
+	// it from the table, the title is bold accent, and the summary itself
+	// keeps the terminal's default foreground so it reads as content. All
+	// safe: this is outside the table, where ANSI is allowed.
+	rule := helpDescStyle.Render(strings.Repeat("─", p.digestRuleWidth()))
+
 	d, fetched := p.jobDigest[j.ID]
 	if !fetched {
-		// Silence here is how this feature looks broken: the status line
-		// says the digest ran, and then every row that wasn't part of it
-		// shows nothing at all. Say so instead.
-		return "\n" + helpDescStyle.Render("▸ no summary for this job — E summarises failed jobs")
+		return "\n" + rule + "\n" + helpDescStyle.Render("▸ no summary for this job — E summarises failed jobs")
 	}
 
 	var b strings.Builder
-	b.WriteString("▸ " + j.Stage + " · " + j.Name + "\n")
+	b.WriteString(helpKeyStyle.Render("▸ "+j.Stage+" · "+j.Name) + "\n")
 	switch {
 	case d.Err != "":
-		b.WriteString("  couldn't read the trace: " + d.Err)
+		b.WriteString(errorTextStyle.Render("  couldn't read the trace: " + d.Err))
 	case len(d.Lines) == 0:
-		b.WriteString("  no error line found — enter to read the whole log")
+		b.WriteString(helpDescStyle.Render("  no error line found — enter to read the whole log"))
 	default:
 		b.WriteString("  " + strings.Join(d.Lines, "\n  "))
 	}
-	return "\n" + helpDescStyle.Render(b.String())
+	return "\n" + rule + "\n" + b.String()
+}
+
+// digestRuleWidth keeps the separator inside the pane even before the first
+// WindowSizeMsg has set a width.
+func (p PipelineList) digestRuleWidth() int {
+	if p.width < 20 {
+		return 20
+	}
+	return p.width
 }
 
 func (p PipelineList) View() string {

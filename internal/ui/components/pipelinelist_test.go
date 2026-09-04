@@ -961,3 +961,28 @@ func TestPipelineList_JobTableKeepsAUsableHeightOnATinyTerminal(t *testing.T) {
 		t.Fatalf("job table height = %d, want at least 1", p.jobTable.Height())
 	}
 }
+
+// The panel used to be rendered in helpDescStyle — the exact style of the
+// help line directly beneath it — with no separator, so a working digest
+// read as more help text and was reported as "I see nothing underneath".
+func TestPipelineList_DigestPanelIsVisuallySeparatedFromTheHelpLine(t *testing.T) {
+	p := NewPipelineList()
+	p.SetSize(120, 30)
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Name: "unit", Stage: "test", Status: api.StatusFailed}})
+	p.SetJobDigest(10, JobDigest{Lines: []string{"FAILED: boom"}})
+
+	view := p.View()
+	if !strings.Contains(view, "─") {
+		t.Fatalf("expected a separator rule above the panel:\n%s", view)
+	}
+	// Colour can't be asserted here: lipgloss degrades to plain text with no
+	// TTY, so every style renders identically under `go test`. The rule
+	// above is the part that survives, and it's what actually breaks the
+	// panel out of the help line visually.
+	rule := strings.Index(view, "─")
+	summary := strings.Index(view, "FAILED: boom")
+	if summary < rule {
+		t.Fatalf("expected the summary below the rule, not above it:\n%s", view)
+	}
+}
