@@ -1318,12 +1318,73 @@ func TestCtrlD_WritesADebugSnapshot(t *testing.T) {
 		t.Fatalf("reading debug dump: %v", err)
 	}
 	body := string(data)
-	for _, want := range []string{"gl-pipe debug", "digestEntries=1", "highlighted=", "panelEmpty="} {
+	for _, want := range []string{"gl-pipe debug", "digestEntries=1", "highlighted=", "digestRows="} {
 		if !strings.Contains(body, want) {
 			t.Errorf("dump missing %q:\n%s", want, body)
 		}
 	}
 	if !strings.Contains(mm.statusMsg, "debug.log") {
 		t.Errorf("expected the status line to name the file, got %q", mm.statusMsg)
+	}
+}
+
+func TestUpdate_DigestBatchCompletionOpensTheDigestView(t *testing.T) {
+	m := newTestModel(t)
+	m.pane = panePipelines
+	m.pipelineList.ClearJobs()
+	m.pipelineList.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 100, Name: "unit", Status: api.StatusFailed}})
+	m.genDigest = 9
+	m.digestPending, m.digestTotal = 1, 1
+	m.loading = true
+
+	updated, _ := m.Update(jobDigestMsg{reqID: 9, jobID: 100, lines: []string{"FAILED: boom"}})
+	mm := updated.(Model)
+
+	// They asked "why did these fail?" — land them on the answers, not back
+	// on the job matrix where the summaries are invisible.
+	if !mm.pipelineList.InDigest() {
+		t.Fatal("expected the digest view to open once the batch completed")
+	}
+	if mm.breadcrumb() != "FAILURE DIGEST" {
+		t.Errorf("breadcrumb = %q, want FAILURE DIGEST", mm.breadcrumb())
+	}
+}
+
+// E is a toggle: once summaries exist for this job view, it must go
+// straight back in rather than re-reading every trace.
+func TestUpdate_DigestRequestWithAnExistingDigestReopensWithoutFetching(t *testing.T) {
+	m := newTestModel(t)
+	m.pane = panePipelines
+	m.pipelineList.ClearJobs()
+	m.pipelineList.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 100, Status: api.StatusFailed}})
+	m.pipelineList.SetJobDigest(100, components.JobDigest{Lines: []string{"cached"}})
+
+	updated, cmd := m.Update(components.FailureDigestRequestMsg{})
+	mm := updated.(Model)
+	if cmd != nil {
+		t.Fatal("expected no fetch when a digest already exists")
+	}
+	if !mm.pipelineList.InDigest() {
+		t.Fatal("expected the existing digest to reopen")
+	}
+}
+
+// Esc inside the digest belongs to the digest (back to jobs), not to the
+// root model's "leave the pipelines pane" handling.
+func TestHandleKey_EscInTheDigestReturnsToJobsNotTheExplorer(t *testing.T) {
+	m := newTestModel(t)
+	m.pane = panePipelines
+	m.pipelineList.ClearJobs()
+	m.pipelineList.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 100, Status: api.StatusFailed}})
+	m.pipelineList.SetJobDigest(100, components.JobDigest{Lines: []string{"boom"}})
+	m.pipelineList.OpenDigestView()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	mm := updated.(Model)
+	if mm.pane != panePipelines {
+		t.Fatal("esc left the pipelines pane instead of returning to the job matrix")
+	}
+	if !mm.pipelineList.InJobs() {
+		t.Fatal("expected the job matrix after esc")
 	}
 }

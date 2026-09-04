@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -64,29 +65,38 @@ type RefreshRequestMsg struct{}
 type FailureDigestRequestMsg struct{}
 
 // JobDigest is one failed job's extracted failure summary. The three states
-// are distinct and the panel renders each differently: no map entry at all
-// means the digest hasn't been run for this job; an entry with empty Lines
-// and empty Err means the trace was read but nothing matched; Err means the
-// fetch itself failed.
+// are distinct and the digest view renders each differently: no map entry at
+// all means the digest hasn't been run for this job; an entry with empty
+// Lines and empty Err means the trace was read but nothing matched; Err
+// means the fetch itself failed.
 type JobDigest struct {
 	Lines []string
 	Err   string
 }
 
-// digestPanelHeight is how many rows the job table gives up to the digest
-// panel while one exists: the blank line above it, the separator rule, the
-// job title, and up to digestLineCount summary lines.
-const digestPanelHeight = 6
-
-// minJobTableHeight is the floor the digest panel may not shrink the job
-// matrix past, so a short terminal degrades instead of showing no rows.
-const minJobTableHeight = 3
+// digestEntry is one row of the failure digest view: a failed job and what
+// its trace said. Built once when the view opens, so the list is stable
+// while you move through it.
+type digestEntry struct {
+	job   api.Job
+	lines []string
+	err   string
+	// line is where this entry starts in the rendered buffer, so moving the
+	// cursor can scroll the viewport to it (same approach as LogViewer's
+	// search-match navigation).
+	line int
+}
 
 type pipelineListMode int
 
 const (
 	modePipelines pipelineListMode = iota
 	modeJobs
+	// modeDigest is the failure digest: every failed job's error line in one
+	// scrollable list, over the same jobs/jobDigest data the job matrix
+	// holds. It's a view of the job matrix, not a separate fetch, so 'E'
+	// toggles straight back to it.
+	modeDigest
 )
 
 // pipelineSortField is one column the pipeline matrix can be sorted by,
@@ -147,6 +157,10 @@ type PipelineList struct {
 	SelectedJ   map[int]bool      // job ID -> staged for bulk action
 	jobDigest   map[int]JobDigest // job ID -> failure summary, once 'E' has run
 
+	digestEntries []digestEntry
+	digestCursor  int
+	digestVP      viewport.Model
+
 	width, height int
 }
 
@@ -187,6 +201,7 @@ func NewPipelineList() PipelineList {
 		Selected:     map[int]bool{},
 		SelectedJ:    map[int]bool{},
 		jobDigest:    map[int]JobDigest{},
+		digestVP:     viewport.New(80, 20),
 		sortField:    sortByDate,
 		sortDesc:     true,
 		filterInput:  filter,
@@ -224,25 +239,11 @@ func (p *PipelineList) SetSize(w, h int) {
 		{Title: "DURATION", Width: jobDurationW},
 	})
 	p.jobTable.SetWidth(w)
-	p.applyJobTableHeight()
-}
+	p.jobTable.SetHeight(h - 3)
 
-// applyJobTableHeight sizes the job table, giving up rows to the failure
-// digest panel only while there's actually a digest to show — the matrix
-// must not be permanently shorter for a feature you aren't using. Called
-// from SetSize and from every place the digest map changes.
-func (p *PipelineList) applyJobTableHeight() {
-	h := p.height - 3
-	if len(p.jobDigest) > 0 {
-		h -= digestPanelHeight
-	}
-	// On a short terminal the panel would otherwise consume the whole table
-	// (bubbles/table happily accepts a height that leaves no rows at all).
-	// Degrade to a cramped matrix rather than an empty one.
-	if h < minJobTableHeight {
-		h = minJobTableHeight
-	}
-	p.jobTable.SetHeight(h)
+	p.digestVP.Width = w
+	p.digestVP.Height = h - 3
+	p.renderDigest()
 }
 
 // SetProjectNames supplies a project ID -> path lookup for the Project column.
@@ -466,7 +467,7 @@ func (p *PipelineList) AllPipelines() []api.Pipeline { return p.pipelines }
 // canceled, skipped, or manual), polling stops making API calls on its
 // own — a manual 'r' still works regardless.
 func (p *PipelineList) NeedsPoll() bool {
-	if p.mode == modeJobs {
+	if p.mode != modePipelines {
 		for _, j := range p.jobs {
 			if !j.Status.Terminal() {
 				return true
@@ -507,10 +508,11 @@ func (p *PipelineList) ClearJobs() {
 	p.filterInput.SetValue("")
 	p.filterInput.Blur()
 	// A fresh job view is a different set of jobs entirely, so last view's
-	// failure summaries would be stale (and would keep the table shortened).
-	// AddJobs deliberately does *not* do this — see SetJobDigest.
+	// failure summaries would be stale. AddJobs deliberately does *not* do
+	// this — see SetJobDigest.
 	p.jobDigest = map[int]JobDigest{}
-	p.applyJobTableHeight()
+	p.digestEntries = nil
+	p.digestCursor = 0
 	p.syncJobRows()
 }
 
@@ -543,7 +545,6 @@ func (p *PipelineList) SetJobDigest(jobID int, d JobDigest) {
 		p.jobDigest = map[int]JobDigest{}
 	}
 	p.jobDigest[jobID] = d
-	p.applyJobTableHeight()
 }
 
 // JobDigestFor returns a job's failure summary, if the digest has been run
@@ -552,6 +553,129 @@ func (p *PipelineList) JobDigestFor(jobID int) (JobDigest, bool) {
 	d, ok := p.jobDigest[jobID]
 	return d, ok
 }
+
+// HasDigest reports whether a digest has already been fetched for the
+// current job view, so 'E' can toggle straight back into it rather than
+// re-reading every trace.
+func (p *PipelineList) HasDigest() bool { return len(p.jobDigest) > 0 }
+
+// InDigest reports whether the failure digest view is showing.
+func (p *PipelineList) InDigest() bool { return p.mode == modeDigest }
+
+// OpenDigestView switches to the failure digest: one entry per failed job,
+// in the job matrix's own order, showing what its trace said.
+func (p *PipelineList) OpenDigestView() {
+	p.digestEntries = p.digestEntries[:0]
+	for _, j := range p.FailedJobs() {
+		d, ok := p.jobDigest[j.ID]
+		if !ok {
+			continue
+		}
+		p.digestEntries = append(p.digestEntries, digestEntry{job: j, lines: d.Lines, err: d.Err})
+	}
+	p.digestCursor = 0
+	p.mode = modeDigest
+	p.renderDigest()
+}
+
+// CloseDigestView returns to the job matrix, leaving the summaries in place
+// so 'E' can come straight back without re-fetching.
+func (p *PipelineList) CloseDigestView() { p.mode = modeJobs }
+
+// HighlightedDigestJob returns the job under the digest view's cursor.
+func (p *PipelineList) HighlightedDigestJob() (api.Job, bool) {
+	if p.digestCursor < 0 || p.digestCursor >= len(p.digestEntries) {
+		return api.Job{}, false
+	}
+	return p.digestEntries[p.digestCursor].job, true
+}
+
+// renderDigest rebuilds the digest buffer, recording where each entry
+// starts so moveDigestCursor can scroll to it, then pushes it into the
+// viewport. The viewport is what makes this scroll — backlog 027 was a
+// hand-rolled cursor over a flat string that could never scroll past its
+// first screenful, and this must not repeat it.
+func (p *PipelineList) renderDigest() {
+	if len(p.digestEntries) == 0 {
+		p.digestVP.SetContent("")
+		return
+	}
+
+	var b strings.Builder
+	line := 0
+	for i := range p.digestEntries {
+		e := &p.digestEntries[i]
+		if i > 0 {
+			b.WriteString("\n")
+			line++
+		}
+		e.line = line
+
+		marker := "  "
+		title := e.job.Stage + " · " + e.job.Name
+		if project := p.projectNames[e.job.ProjectID]; project != "" {
+			title = project + " · " + title
+		}
+		if i == p.digestCursor {
+			marker = "▸ "
+			title = helpKeyStyle.Render(title)
+		} else {
+			title = helpDescStyle.Render(title)
+		}
+		b.WriteString(marker + title + "\n")
+		line++
+
+		switch {
+		case e.err != "":
+			b.WriteString(errorTextStyle.Render("    couldn't read the trace: "+e.err) + "\n")
+			line++
+		case len(e.lines) == 0:
+			b.WriteString(helpDescStyle.Render("    no error line found — enter to read the whole log") + "\n")
+			line++
+		default:
+			for _, l := range e.lines {
+				b.WriteString("    " + l + "\n")
+				line++
+			}
+		}
+	}
+	p.digestVP.SetContent(b.String())
+	p.scrollDigestToCursor()
+}
+
+func (p *PipelineList) moveDigestCursor(delta int) {
+	if len(p.digestEntries) == 0 {
+		return
+	}
+	p.digestCursor += delta
+	if p.digestCursor < 0 {
+		p.digestCursor = 0
+	}
+	if p.digestCursor >= len(p.digestEntries) {
+		p.digestCursor = len(p.digestEntries) - 1
+	}
+	p.renderDigest()
+}
+
+func (p *PipelineList) scrollDigestToCursor() {
+	if p.digestCursor < 0 || p.digestCursor >= len(p.digestEntries) {
+		return
+	}
+	top := p.digestEntries[p.digestCursor].line
+	if top < p.digestVP.YOffset {
+		p.digestVP.SetYOffset(top)
+		return
+	}
+	// Keep the whole entry on screen, not just its title line.
+	bottom := top + digestLinesPerEntry
+	if bottom >= p.digestVP.YOffset+p.digestVP.Height {
+		p.digestVP.SetYOffset(bottom - p.digestVP.Height + 1)
+	}
+}
+
+// digestLinesPerEntry is the worst-case height of one entry (title plus the
+// summary lines), used to keep a selected entry fully on screen.
+const digestLinesPerEntry = 4
 
 // AddJobs merges one pipeline's jobs into the matrix (insert-or-update by
 // job ID), and records that pipeline as part of the current view if it
@@ -840,68 +964,85 @@ func (p PipelineList) Update(msg tea.Msg) (PipelineList, tea.Cmd) {
 			case "r":
 				return p, func() tea.Msg { return RefreshRequestMsg{} }
 			}
+		case modeDigest:
+			switch km.String() {
+			case "esc", "E":
+				p.CloseDigestView()
+				return p, nil
+			case "j", "down":
+				p.moveDigestCursor(1)
+				return p, nil
+			case "k", "up":
+				p.moveDigestCursor(-1)
+				return p, nil
+			case "g":
+				p.digestCursor = 0
+				p.renderDigest()
+				return p, nil
+			case "G":
+				p.moveDigestCursor(len(p.digestEntries))
+				return p, nil
+			case "enter":
+				j, ok := p.HighlightedDigestJob()
+				if !ok {
+					return p, nil
+				}
+				return p, func() tea.Msg { return OpenLogsMsg{ProjectID: j.ProjectID, JobID: j.ID} }
+			}
 		}
 	}
 
 	var cmd tea.Cmd
-	if p.mode == modePipelines {
+	switch p.mode {
+	case modePipelines:
 		p.pipeTable, cmd = p.pipeTable.Update(msg)
-	} else {
+	case modeDigest:
+		// Anything the digest's own keys didn't claim (pgup/pgdn, mouse
+		// wheel) falls through to the viewport, which is what actually
+		// scrolls.
+		p.digestVP, cmd = p.digestVP.Update(msg)
+	default:
 		p.jobTable, cmd = p.jobTable.Update(msg)
 	}
 	return p, cmd
 }
 
-// digestPanel renders the highlighted job's failure summary under the job
-// table — the same "expand the highlighted row underneath the list" idiom
-// as presetDetail. It lives outside the table on purpose: a bubbles/table
-// cell can carry no ANSI (TableStyles' doc comment) and has nowhere near
-// the width for a real error line.
-func (p PipelineList) digestPanel() string {
-	if len(p.jobDigest) == 0 {
-		return ""
-	}
-	j, ok := p.HighlightedJob()
-	if !ok {
-		return ""
-	}
-
-	// The panel sits directly above the help line and, with a part-empty
-	// matrix, a long way below the row it describes. Rendering it in
-	// helpDescStyle (as this first did) made a working digest read as more
-	// help text — reported as "I see nothing underneath". A rule separates
-	// it from the table, the title is bold accent, and the summary itself
-	// keeps the terminal's default foreground so it reads as content. All
-	// safe: this is outside the table, where ANSI is allowed.
+// digestView renders the failure digest: every failed job's error in one
+// scrollable list. This replaced a per-row detail panel under the job
+// table — the panel showed one failure at a time and only while the cursor
+// happened to sit on it, which meant a working digest was indistinguishable
+// from a broken one. The whole point is reading a screenful of failures at
+// once.
+func (p PipelineList) digestView() string {
 	rule := helpDescStyle.Render(strings.Repeat("─", p.digestRuleWidth()))
 
-	d, fetched := p.jobDigest[j.ID]
-	if !fetched {
-		return "\n" + rule + "\n" + helpDescStyle.Render("▸ no summary for this job — E summarises failed jobs")
+	projects := map[int]bool{}
+	for _, e := range p.digestEntries {
+		projects[e.job.ProjectID] = true
+	}
+	header := fmt.Sprintf("FAILURE DIGEST — %d failed job(s), %d project(s)\n", len(p.digestEntries), len(projects))
+
+	body := p.digestVP.View()
+	if len(p.digestEntries) == 0 {
+		body = helpDescStyle.Render("  nothing to summarise — no failed jobs in this view")
 	}
 
-	var b strings.Builder
-	b.WriteString(helpKeyStyle.Render("▸ "+j.Stage+" · "+j.Name) + "\n")
-	switch {
-	case d.Err != "":
-		b.WriteString(errorTextStyle.Render("  couldn't read the trace: " + d.Err))
-	case len(d.Lines) == 0:
-		b.WriteString(helpDescStyle.Render("  no error line found — enter to read the whole log"))
-	default:
-		b.WriteString("  " + strings.Join(d.Lines, "\n  "))
-	}
-	return "\n" + rule + "\n" + b.String()
+	return header + rule + "\n" + body + "\n" + rule + "\n" + RenderHelp(
+		[2]string{"j/k", "move"},
+		[2]string{"enter", "open full log"},
+		[2]string{"E/esc", "back to jobs"},
+	)
 }
 
-// DebugState reports the state the digest panel actually depends on, for
-// ctrl+d's diagnostic dump: whether a digest exists, whether a row is
-// highlighted, and whether the panel therefore renders. Every early return
-// in digestPanel is observable here, so a "nothing shows" report can be
-// narrowed to one cause without guessing.
+// DebugState reports the state the digest depends on, for ctrl+d's
+// diagnostic dump.
 func (p PipelineList) DebugState() string {
 	mode := "pipelines"
-	if p.mode == modeJobs {
+	switch p.mode {
+	case modeJobs:
 		mode = "jobs"
+	case modeDigest:
+		mode = "digest"
 	}
 
 	digestKeys := make([]int, 0, len(p.jobDigest))
@@ -921,18 +1062,16 @@ func (p PipelineList) DebugState() string {
 		}
 	}
 
-	panel := p.digestPanel()
-
 	var b strings.Builder
 	fmt.Fprintf(&b, "  mode=%s size=%dx%d jobTableHeight=%d\n", mode, p.width, p.height, p.jobTable.Height())
 	fmt.Fprintf(&b, "  jobs=%d jobFiltered=%d cursor=%d filter=%q filtering=%v\n",
 		len(p.jobs), len(p.jobFiltered), p.jobTable.Cursor(), p.filterInput.Value(), p.filtering)
 	fmt.Fprintf(&b, "  pipelinesInView=%d selectedJobs=%d\n", len(p.Pipelines), len(p.SelectedJ))
 	fmt.Fprintf(&b, "  digestEntries=%d keys=%v\n", len(p.jobDigest), digestKeys)
+	fmt.Fprintf(&b, "  digestRows=%d digestCursor=%d vpHeight=%d vpOffset=%d\n",
+		len(p.digestEntries), p.digestCursor, p.digestVP.Height, p.digestVP.YOffset)
 	fmt.Fprintf(&b, "  highlighted=%s\n", highlighted)
 	fmt.Fprintf(&b, "  digestForHighlighted=%s\n", digestForHighlighted)
-	fmt.Fprintf(&b, "  panelEmpty=%v panelLen=%d\n", panel == "", len(panel))
-	fmt.Fprintf(&b, "  panelRaw=%q\n", panel)
 	return b.String()
 }
 
@@ -946,6 +1085,9 @@ func (p PipelineList) digestRuleWidth() int {
 }
 
 func (p PipelineList) View() string {
+	if p.mode == modeDigest {
+		return lipgloss.NewStyle().Render(p.digestView())
+	}
 	if p.mode == modeJobs {
 		var header string
 		switch len(p.Pipelines) {
@@ -966,14 +1108,14 @@ func (p PipelineList) View() string {
 			[2]string{"a", "stage/unstage all"},
 			[2]string{"enter", "view logs / downstream pipeline"},
 			[2]string{"p", "play manual job(s)"},
-			[2]string{"E", "why did it fail?"},
+			[2]string{"E", "why did they fail?"},
 			[2]string{"R", "bulk retry"},
 			[2]string{"K", "bulk cancel"},
 			[2]string{"/", "filter"},
 			[2]string{"r", "refresh now"},
 			[2]string{"esc", "back"},
 		)
-		return lipgloss.NewStyle().Render(header + p.jobTable.View() + p.digestPanel() + help)
+		return lipgloss.NewStyle().Render(header + p.jobTable.View() + help)
 	}
 
 	dir := "↓"

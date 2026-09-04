@@ -378,7 +378,9 @@ func (m Model) shouldPoll() bool {
 // pipeline (pipelineDetailCmd, which patches in place and is harmless if
 // stale). Shared by the periodic poll and the manual 'r' refresh key.
 func (m Model) refreshActiveMatrix() tea.Cmd {
-	if m.pipelineList.InJobs() {
+	// The digest is a view of the job matrix's own data, so it refreshes the
+	// same way — by pipeline, not by pipeline detail.
+	if m.pipelineList.InJobs() || m.pipelineList.InDigest() {
 		pipelines := m.pipelineList.Pipelines
 		if len(pipelines) == 0 {
 			return nil
@@ -750,6 +752,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.digestPending == 0 {
 			m.loading = false
 			m.setStatus(m.digestSummary())
+			// Land the user in the digest rather than back on the job
+			// matrix: they asked "why did these fail?", so show the answers.
+			m.pipelineList.OpenDigestView()
 		}
 		return m, nil
 
@@ -944,6 +949,9 @@ func (m Model) breadcrumb() string {
 	case m.mrList.Active:
 		return "MERGE REQUESTS"
 	case m.pane == panePipelines:
+		if m.pipelineList.InDigest() {
+			return "FAILURE DIGEST"
+		}
 		if m.pipelineList.InJobs() {
 			return "JOBS"
 		}

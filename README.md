@@ -217,6 +217,7 @@ The matrix polls automatically every 10s while any pipeline shown hasn't reached
 | `a` | Stage/unstage all jobs currently loaded |
 | `Enter` | Stream that job's live log — or, on a deploy/trigger job, jump to the downstream pipeline it kicked off |
 | `E` | Failure digest: why did they fail? (see below) |
+| `Ctrl+D` | Write a diagnostic state snapshot to `debug.log` beside `config.yaml` (works from anywhere) |
 | `R` | Bulk retry the staged (or highlighted) job(s) |
 | `K` | Bulk cancel the staged (or highlighted) job(s) |
 | `/` | Filter by job name, stage, status, project, or runner (substring, case-insensitive) |
@@ -225,17 +226,31 @@ The matrix polls automatically every 10s while any pipeline shown hasn't reached
 
 #### Failure digest (`E`)
 
-With a dozen failures spread across nine repos, "what actually broke?" shouldn't mean opening the log viewer a dozen times. `E` fetches the trace of **every failed job currently loaded** (not just what a `/` filter is showing) and pulls out each one's first error-looking line plus a couple of lines of context. Move the cursor over a failed job and its summary appears in a panel under the table:
+With a dozen failures spread across nine repos, "what actually broke?" shouldn't mean opening the log viewer a dozen times. `E` fetches the trace of **every failed job currently loaded** (not just what a `/` filter is showing), pulls out each one's first error-looking line plus a couple of lines of context, and shows them all in one scrollable list:
 
 ```
-▸ test · unit
-  FAILED: src/auth/token_test.go:88
-  expected 200, got 401
+FAILURE DIGEST — 2 failed job(s), 2 project(s)
+──────────────────────────────────────────────
+▸ backend/api · test · unit
+    FAILED: src/auth/token_test.go:88
+    expected 200, got 401
+
+  web/portal · test · e2e
+    Error: timeout waiting for selector ".btn"
+    at login.spec.ts:41
+──────────────────────────────────────────────
+j/k move · enter open full log · E/esc back to jobs
 ```
 
-It runs only when you press `E` — never automatically — so the 10s poll can't turn into a burst of trace requests. The summaries survive polling but are cleared when you open a different set of jobs. A job whose trace had no recognisable error line says so explicitly rather than looking un-fetched; `Enter` still opens the full log for anything the one-line summary doesn't settle.
+| Key | Action |
+|---|---|
+| `j` / `k` | Move between failures (`g`/`G` for first/last) |
+| `Enter` | Open the full log for the selected job |
+| `E` or `Esc` | Back to the job matrix |
 
-The heuristic is the same regex the log viewer's own `E` (jump to first error) uses, so the two never disagree. It matches on the *first* occurrence, which can occasionally land on noise like a dependency whose name contains "error" — the full log is one keystroke away when it does.
+It runs only when you press `E` — never automatically — so the 10s poll can't turn into a burst of trace requests. Summaries survive polling and `E` toggles straight back into the digest without re-fetching; they're cleared only when you open a different set of jobs. Bridge (trigger) jobs are skipped: GitLab has no trace for one, and the failure worth reading lives in the downstream pipeline's own jobs.
+
+A job whose trace had no recognisable error line says so explicitly rather than appearing blank. The heuristic is the same regex the log viewer's own `E` (jump to first error) uses, so the two never disagree. It matches on the *first* occurrence, which can occasionally land on noise like a dependency whose name contains "error" — `Enter` is one keystroke away when it does.
 
 Showing jobs from more than one pipeline adds `Project` and `Pipeline` (`#IID`) columns so you can tell which job belongs to which run. The same automatic polling as the pipeline matrix applies here, keyed off the jobs' own statuses rather than the parent pipeline's. `/` works exactly like the pipeline matrix's: it narrows what's already loaded, staged jobs (`x`) stay staged even if a filter later hides them, and `a` (stage/unstage all) respects the active filter.
 

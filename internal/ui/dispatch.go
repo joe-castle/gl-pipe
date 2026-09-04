@@ -112,7 +112,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case "esc":
-		if !textFocused && !m.pipelineList.InJobs() {
+		// The digest handles its own esc (back to the job matrix), so it
+		// must not be treated as a top-level pipeline view here.
+		if !textFocused && !m.pipelineList.InJobs() && !m.pipelineList.InDigest() {
 			if m.downstreamOrigin {
 				m.pipelineList.ReturnToJobs()
 				m.downstreamOrigin = false
@@ -210,6 +212,12 @@ func (m *Model) focusedWebURL() string {
 		return m.logJobURL
 	}
 	if m.pane == panePipelines {
+		if m.pipelineList.InDigest() {
+			if j, ok := m.pipelineList.HighlightedDigestJob(); ok {
+				return j.WebURL
+			}
+			return ""
+		}
 		if m.pipelineList.InJobs() {
 			if j, ok := m.pipelineList.HighlightedJob(); ok {
 				return j.WebURL
@@ -445,6 +453,13 @@ func (m Model) startDigestBatch() (tea.Model, tea.Cmd) {
 	// loadingProgress relies on at most one batch kind being in flight at a
 	// time (the UI is modal). This is the first batch a user could fire
 	// while another is still running, so it refuses rather than break that.
+	// Already fetched for this job view: 'E' is a toggle, so go straight
+	// back in rather than re-reading every trace. ClearJobs drops the
+	// summaries when the job set actually changes.
+	if m.pipelineList.HasDigest() {
+		m.pipelineList.OpenDigestView()
+		return m, nil
+	}
 	if m.loading {
 		m.setStatus("still loading — try the digest again once that finishes")
 		return m, nil

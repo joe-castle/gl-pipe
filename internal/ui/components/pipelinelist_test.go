@@ -771,18 +771,31 @@ func TestPipelineList_FailedJobsFiltersToFailuresOnly(t *testing.T) {
 	})
 
 	failed := p.FailedJobs()
-	if len(failed) != 2 {
-		t.Fatalf("expected 2 failed jobs, got %d: %+v", len(failed), failed)
-	}
-	if failed[0].ID != 10 || failed[1].ID != 12 {
-		t.Errorf("unexpected failed jobs: %+v", failed)
+	if len(failed) != 2 || failed[0].ID != 10 || failed[1].ID != 12 {
+		t.Fatalf("expected the 2 failed jobs, got %+v", failed)
 	}
 }
 
+// A bridge is not a job: GitLab has no trace endpoint for one, so asking
+// for it is a guaranteed 404 reported to the user as a failed fetch. Enter
+// on a bridge already opens the downstream pipeline for the same reason.
+func TestPipelineList_FailedJobsExcludesBridges(t *testing.T) {
+	p := NewPipelineList()
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{
+		{ID: 10, Name: "unit", Status: api.StatusFailed},
+		{ID: 11, Name: "deploy", Status: api.StatusFailed, IsBridge: true},
+	})
+
+	failed := p.FailedJobs()
+	if len(failed) != 1 || failed[0].ID != 10 {
+		t.Fatalf("expected only the real job, got %+v", failed)
+	}
+}
+
+// The digest acts on everything loaded, not just what a '/' filter happens
+// to be showing — otherwise a filter silently narrows what you fetch.
 func TestPipelineList_FailedJobsIgnoresTheTextFilter(t *testing.T) {
-	// The digest acts on everything loaded, not just what a '/' filter
-	// happens to be showing — otherwise a filter narrows what you fetch and
-	// the panel is silently empty for rows you scroll to afterwards.
 	p := NewPipelineList()
 	p.ClearJobs()
 	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{
@@ -804,16 +817,18 @@ func TestPipelineList_JobDigestSurvivesAPollRefreshButNotANewJobView(t *testing.
 	p.SetJobDigest(10, JobDigest{Lines: []string{"FAILED: boom"}})
 
 	// The 10s auto-poll re-issues AddJobs for every shown pipeline; wiping
-	// the digest there would make it vanish seconds after it arrived.
+	// the digest there would drop it seconds after it arrived.
 	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Status: api.StatusFailed}})
 	if d, ok := p.JobDigestFor(10); !ok || len(d.Lines) != 1 {
 		t.Fatalf("digest lost across a poll refresh: %+v ok=%v", d, ok)
 	}
 
-	// A fresh job view is a different set of jobs entirely.
 	p.ClearJobs()
 	if _, ok := p.JobDigestFor(10); ok {
 		t.Fatal("digest survived ClearJobs")
+	}
+	if p.HasDigest() {
+		t.Fatal("HasDigest true after ClearJobs")
 	}
 }
 
@@ -842,152 +857,170 @@ func TestPipelineList_CapitalEDoesNothingInPipelineMode(t *testing.T) {
 	}
 }
 
-func TestPipelineList_ViewShowsTheDigestForTheHighlightedJob(t *testing.T) {
+// The digest replaced a per-row detail panel: that showed one failure at a
+// time, only while the cursor sat on it, so a working digest was
+// indistinguishable from a broken one. Every failure must be on one screen.
+func TestPipelineList_DigestViewListsEveryFailedJobAtOnce(t *testing.T) {
 	p := NewPipelineList()
 	p.SetSize(120, 30)
-	p.ClearJobs()
-	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Name: "unit", Status: api.StatusFailed}})
-	p.SetJobDigest(10, JobDigest{Lines: []string{"FAILED: token_test.go:88", "expected 200, got 401"}})
-
-	view := p.View()
-	if !strings.Contains(view, "token_test.go:88") || !strings.Contains(view, "expected 200, got 401") {
-		t.Fatalf("digest missing from the job view:\n%s", view)
-	}
-}
-
-func TestPipelineList_ViewSaysSoWhenATraceHadNoErrorLine(t *testing.T) {
-	// "fetched, nothing matched" must read differently from "not fetched",
-	// or a job with an unhelpful trace looks like the digest never ran.
-	p := NewPipelineList()
-	p.SetSize(120, 30)
-	p.ClearJobs()
-	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Name: "unit", Status: api.StatusFailed}})
-	p.SetJobDigest(10, JobDigest{})
-
-	if !strings.Contains(p.View(), "no error line") {
-		t.Fatalf("expected an explicit no-match message:\n%s", p.View())
-	}
-}
-
-func TestPipelineList_ViewShowsADigestFetchError(t *testing.T) {
-	p := NewPipelineList()
-	p.SetSize(120, 30)
-	p.ClearJobs()
-	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Name: "unit", Status: api.StatusFailed}})
-	p.SetJobDigest(10, JobDigest{Err: "403 forbidden"})
-
-	if !strings.Contains(p.View(), "403 forbidden") {
-		t.Fatalf("expected the fetch error in the panel:\n%s", p.View())
-	}
-}
-
-func TestPipelineList_ViewHasNoDigestPanelBeforeTheDigestRuns(t *testing.T) {
-	p := NewPipelineList()
-	p.SetSize(120, 30)
-	p.ClearJobs()
-	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Name: "unit", Status: api.StatusFailed}})
-
-	if strings.Contains(p.View(), "no error line") {
-		t.Fatal("un-fetched job must not render the no-match message")
-	}
-}
-
-// The job table shrinks to make room for the panel, but only once there is
-// a panel to make room for — the matrix must not be permanently shorter for
-// a feature you are not using.
-func TestPipelineList_JobTableHeightOnlyShrinksWhileADigestExists(t *testing.T) {
-	p := NewPipelineList()
-	p.SetSize(120, 30)
-	p.ClearJobs()
-	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Status: api.StatusFailed}})
-	full := p.jobTable.Height()
-
-	p.SetJobDigest(10, JobDigest{Lines: []string{"boom"}})
-	shrunk := p.jobTable.Height()
-	if shrunk >= full {
-		t.Fatalf("expected the job table to shrink for the panel: %d -> %d", full, shrunk)
-	}
-
-	p.ClearJobs()
-	if p.jobTable.Height() != full {
-		t.Fatalf("expected the height restored after ClearJobs: got %d, want %d", p.jobTable.Height(), full)
-	}
-}
-
-// A bridge is not a job: GitLab has no trace endpoint for one, so asking
-// for it is a guaranteed 404 reported to the user as a failed fetch. Enter
-// on a bridge already opens the downstream pipeline for the same reason.
-func TestPipelineList_FailedJobsExcludesBridges(t *testing.T) {
-	p := NewPipelineList()
+	p.SetProjectNames(map[int]string{10: "backend/api", 11: "web/portal"})
 	p.ClearJobs()
 	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{
-		{ID: 10, Name: "unit", Status: api.StatusFailed},
-		{ID: 11, Name: "deploy", Status: api.StatusFailed, IsBridge: true},
+		{ID: 10, ProjectID: 10, Name: "unit", Stage: "test", Status: api.StatusFailed},
+		{ID: 11, ProjectID: 10, Name: "build", Stage: "build", Status: api.StatusSuccess},
+		{ID: 12, ProjectID: 11, Name: "e2e", Stage: "test", Status: api.StatusFailed},
 	})
+	p.SetJobDigest(10, JobDigest{Lines: []string{"FAILED: token_test.go:88"}})
+	p.SetJobDigest(12, JobDigest{Lines: []string{"Error: timeout waiting for selector"}})
 
-	failed := p.FailedJobs()
-	if len(failed) != 1 || failed[0].ID != 10 {
-		t.Fatalf("expected only the real job, got %+v", failed)
+	p.OpenDigestView()
+	if !p.InDigest() {
+		t.Fatal("expected InDigest after OpenDigestView")
 	}
-}
 
-// Without this the feature looks broken: you press E, the status line says
-// it worked, and then every row you happen to be sitting on shows nothing.
-func TestPipelineList_ViewHintsWhenTheHighlightedJobHasNoSummary(t *testing.T) {
-	p := NewPipelineList()
-	p.SetSize(120, 30)
-	p.ClearJobs()
-	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{
-		{ID: 10, Name: "build", Status: api.StatusSuccess},
-		{ID: 11, Name: "unit", Status: api.StatusFailed},
-	})
-	p.SetJobDigest(11, JobDigest{Lines: []string{"FAILED: boom"}})
-
-	// Cursor is on the passing job, which has no summary of its own.
 	view := p.View()
-	if !strings.Contains(view, "no summary for this job") {
-		t.Fatalf("expected a hint that the digest ran but not for this row:\n%s", view)
+	for _, want := range []string{
+		"FAILURE DIGEST",
+		"backend/api · test · unit",
+		"FAILED: token_test.go:88",
+		"web/portal · test · e2e",
+		"Error: timeout waiting for selector",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("digest view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "build") {
+		t.Error("a passing job must not appear in the digest")
 	}
 }
 
-func TestPipelineList_JobTableKeepsAUsableHeightOnATinyTerminal(t *testing.T) {
-	p := NewPipelineList()
-	p.SetSize(80, 8) // h-3-digestPanelHeight would go to zero or below
-	p.ClearJobs()
-	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Status: api.StatusFailed}})
-	p.SetJobDigest(10, JobDigest{Lines: []string{"boom"}})
-
-	if p.jobTable.Height() < 1 {
-		t.Fatalf("job table height = %d, want at least 1", p.jobTable.Height())
-	}
-}
-
-// The panel used to be rendered in helpDescStyle — the exact style of the
-// help line directly beneath it — with no separator, so a working digest
-// read as more help text and was reported as "I see nothing underneath".
-func TestPipelineList_DigestPanelIsVisuallySeparatedFromTheHelpLine(t *testing.T) {
+func TestPipelineList_DigestViewReportsATraceThatHadNoErrorLine(t *testing.T) {
 	p := NewPipelineList()
 	p.SetSize(120, 30)
 	p.ClearJobs()
 	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Name: "unit", Stage: "test", Status: api.StatusFailed}})
-	p.SetJobDigest(10, JobDigest{Lines: []string{"FAILED: boom"}})
+	p.SetJobDigest(10, JobDigest{})
+	p.OpenDigestView()
 
-	view := p.View()
-	if !strings.Contains(view, "─") {
-		t.Fatalf("expected a separator rule above the panel:\n%s", view)
-	}
-	// Colour can't be asserted here: lipgloss degrades to plain text with no
-	// TTY, so every style renders identically under `go test`. The rule
-	// above is the part that survives, and it's what actually breaks the
-	// panel out of the help line visually.
-	rule := strings.Index(view, "─")
-	summary := strings.Index(view, "FAILED: boom")
-	if summary < rule {
-		t.Fatalf("expected the summary below the rule, not above it:\n%s", view)
+	if !strings.Contains(p.View(), "no error line") {
+		t.Fatalf("expected an explicit no-match line:\n%s", p.View())
 	}
 }
 
-func TestPipelineList_DebugStateReportsWhatTheDigestPanelDependsOn(t *testing.T) {
+func TestPipelineList_DigestViewReportsAFetchError(t *testing.T) {
+	p := NewPipelineList()
+	p.SetSize(120, 30)
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Name: "unit", Stage: "test", Status: api.StatusFailed}})
+	p.SetJobDigest(10, JobDigest{Err: "403 forbidden"})
+	p.OpenDigestView()
+
+	if !strings.Contains(p.View(), "403 forbidden") {
+		t.Fatalf("expected the fetch error in the digest:\n%s", p.View())
+	}
+}
+
+func TestPipelineList_DigestCursorMovesAndEnterOpensThatJobsLog(t *testing.T) {
+	p := NewPipelineList()
+	p.SetSize(120, 30)
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{
+		{ID: 10, ProjectID: 10, Name: "unit", Status: api.StatusFailed},
+		{ID: 12, ProjectID: 11, Name: "e2e", Status: api.StatusFailed},
+	})
+	p.SetJobDigest(10, JobDigest{Lines: []string{"first"}})
+	p.SetJobDigest(12, JobDigest{Lines: []string{"second"}})
+	p.OpenDigestView()
+
+	updated, _ := p.Update(runeKey('j'))
+	j, ok := updated.HighlightedDigestJob()
+	if !ok || j.ID != 12 {
+		t.Fatalf("expected 'j' to move to the second entry, got %+v ok=%v", j, ok)
+	}
+
+	_, cmd := updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected a Cmd for enter")
+	}
+	msg, ok := cmd().(OpenLogsMsg)
+	if !ok {
+		t.Fatalf("expected OpenLogsMsg, got %T", cmd())
+	}
+	if msg.JobID != 12 || msg.ProjectID != 11 {
+		t.Fatalf("enter opened the wrong job's log: %+v", msg)
+	}
+}
+
+func TestPipelineList_DigestCursorStopsAtTheEnds(t *testing.T) {
+	p := NewPipelineList()
+	p.SetSize(120, 30)
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Status: api.StatusFailed}})
+	p.SetJobDigest(10, JobDigest{Lines: []string{"only"}})
+	p.OpenDigestView()
+
+	updated, _ := p.Update(runeKey('k')) // already at the top
+	updated, _ = updated.Update(runeKey('j'))
+	updated, _ = updated.Update(runeKey('j')) // past the end
+	if _, ok := updated.HighlightedDigestJob(); !ok {
+		t.Fatal("cursor left the entry range")
+	}
+}
+
+// Backlog 027: a hand-rolled cursor over a flat string could never scroll
+// past its first screenful. The digest uses a viewport for exactly that
+// reason, and a selection well past the visible window must still resolve.
+func TestPipelineList_DigestScrollsPastTheFirstScreenful(t *testing.T) {
+	p := NewPipelineList()
+	p.SetSize(120, 12)
+	p.ClearJobs()
+
+	jobs := make([]api.Job, 0, 40)
+	for i := 0; i < 40; i++ {
+		jobs = append(jobs, api.Job{ID: 100 + i, Name: "job", Status: api.StatusFailed})
+	}
+	p.AddJobs(api.Pipeline{ID: 1}, jobs)
+	for _, j := range jobs {
+		p.SetJobDigest(j.ID, JobDigest{Lines: []string{"boom"}})
+	}
+	p.OpenDigestView()
+
+	updated := p
+	for i := 0; i < 39; i++ {
+		updated, _ = updated.Update(runeKey('j'))
+	}
+
+	j, ok := updated.HighlightedDigestJob()
+	if !ok || j.ID != 139 {
+		t.Fatalf("expected the last entry selected, got %+v ok=%v", j, ok)
+	}
+	if updated.digestVP.YOffset == 0 {
+		t.Fatal("expected the viewport to have scrolled to follow the cursor")
+	}
+}
+
+func TestPipelineList_EscAndCapitalEReturnToTheJobMatrix(t *testing.T) {
+	p := NewPipelineList()
+	p.SetSize(120, 30)
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Status: api.StatusFailed}})
+	p.SetJobDigest(10, JobDigest{Lines: []string{"boom"}})
+
+	for _, key := range []tea.KeyMsg{tea.KeyMsg{Type: tea.KeyEsc}, runeKey('E')} {
+		p.OpenDigestView()
+		updated, _ := p.Update(key)
+		if updated.InDigest() || !updated.InJobs() {
+			t.Fatalf("expected %v to return to the job matrix", key)
+		}
+		// The summaries stay, so E can toggle straight back in.
+		if !updated.HasDigest() {
+			t.Fatal("closing the digest must not discard the summaries")
+		}
+	}
+}
+
+func TestPipelineList_DebugStateReportsWhatTheDigestDependsOn(t *testing.T) {
 	p := NewPipelineList()
 	p.SetSize(120, 30)
 	p.ClearJobs()
@@ -996,17 +1029,10 @@ func TestPipelineList_DebugStateReportsWhatTheDigestPanelDependsOn(t *testing.T)
 		{ID: 11, Name: "build", Stage: "build", Status: api.StatusSuccess},
 	})
 	p.SetJobDigest(10, JobDigest{Lines: []string{"FAILED: boom"}})
+	p.OpenDigestView()
 
 	got := p.DebugState()
-	for _, want := range []string{
-		"mode=jobs",
-		"jobs=2",
-		"jobFiltered=2",
-		"cursor=0",
-		"digestEntries=1",
-		"highlighted=",
-		"panelEmpty=",
-	} {
+	for _, want := range []string{"mode=digest", "jobs=2", "digestEntries=1", "digestRows=1", "digestCursor=0"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("DebugState missing %q:\n%s", want, got)
 		}
