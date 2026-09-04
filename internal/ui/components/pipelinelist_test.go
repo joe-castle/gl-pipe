@@ -913,3 +913,51 @@ func TestPipelineList_JobTableHeightOnlyShrinksWhileADigestExists(t *testing.T) 
 		t.Fatalf("expected the height restored after ClearJobs: got %d, want %d", p.jobTable.Height(), full)
 	}
 }
+
+// A bridge is not a job: GitLab has no trace endpoint for one, so asking
+// for it is a guaranteed 404 reported to the user as a failed fetch. Enter
+// on a bridge already opens the downstream pipeline for the same reason.
+func TestPipelineList_FailedJobsExcludesBridges(t *testing.T) {
+	p := NewPipelineList()
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{
+		{ID: 10, Name: "unit", Status: api.StatusFailed},
+		{ID: 11, Name: "deploy", Status: api.StatusFailed, IsBridge: true},
+	})
+
+	failed := p.FailedJobs()
+	if len(failed) != 1 || failed[0].ID != 10 {
+		t.Fatalf("expected only the real job, got %+v", failed)
+	}
+}
+
+// Without this the feature looks broken: you press E, the status line says
+// it worked, and then every row you happen to be sitting on shows nothing.
+func TestPipelineList_ViewHintsWhenTheHighlightedJobHasNoSummary(t *testing.T) {
+	p := NewPipelineList()
+	p.SetSize(120, 30)
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{
+		{ID: 10, Name: "build", Status: api.StatusSuccess},
+		{ID: 11, Name: "unit", Status: api.StatusFailed},
+	})
+	p.SetJobDigest(11, JobDigest{Lines: []string{"FAILED: boom"}})
+
+	// Cursor is on the passing job, which has no summary of its own.
+	view := p.View()
+	if !strings.Contains(view, "no summary for this job") {
+		t.Fatalf("expected a hint that the digest ran but not for this row:\n%s", view)
+	}
+}
+
+func TestPipelineList_JobTableKeepsAUsableHeightOnATinyTerminal(t *testing.T) {
+	p := NewPipelineList()
+	p.SetSize(80, 8) // h-3-digestPanelHeight would go to zero or below
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Status: api.StatusFailed}})
+	p.SetJobDigest(10, JobDigest{Lines: []string{"boom"}})
+
+	if p.jobTable.Height() < 1 {
+		t.Fatalf("job table height = %d, want at least 1", p.jobTable.Height())
+	}
+}

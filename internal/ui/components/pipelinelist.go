@@ -78,6 +78,10 @@ type JobDigest struct {
 // blank line separating it from the table).
 const digestPanelHeight = 5
 
+// minJobTableHeight is the floor the digest panel may not shrink the job
+// matrix past, so a short terminal degrades instead of showing no rows.
+const minJobTableHeight = 3
+
 type pipelineListMode int
 
 const (
@@ -231,6 +235,12 @@ func (p *PipelineList) applyJobTableHeight() {
 	h := p.height - 3
 	if len(p.jobDigest) > 0 {
 		h -= digestPanelHeight
+	}
+	// On a short terminal the panel would otherwise consume the whole table
+	// (bubbles/table happily accepts a height that leaves no rows at all).
+	// Degrade to a cramped matrix rather than an empty one.
+	if h < minJobTableHeight {
+		h = minJobTableHeight
 	}
 	p.jobTable.SetHeight(h)
 }
@@ -507,10 +517,17 @@ func (p *PipelineList) ClearJobs() {
 // FailedJobs returns every failed job currently loaded, ignoring the text
 // filter: the digest acts on everything in the matrix, not just what's on
 // screen, so scrolling to a row a filter had hidden still shows a summary.
+//
+// Bridges are excluded. A bridge is not a job — GitLab exposes no trace
+// endpoint for one, so fetching it is a guaranteed 404 that surfaces to the
+// user as "trace(s) failed to load" for something that never had a log in
+// the first place. Enter on a bridge already opens the downstream pipeline
+// for the same reason; the failure worth reading is in that pipeline's own
+// jobs.
 func (p *PipelineList) FailedJobs() []api.Job {
 	out := make([]api.Job, 0, len(p.jobs))
 	for _, j := range p.jobs {
-		if j.Status == api.StatusFailed {
+		if j.Status == api.StatusFailed && !j.IsBridge {
 			out = append(out, j)
 		}
 	}
@@ -850,7 +867,10 @@ func (p PipelineList) digestPanel() string {
 	}
 	d, fetched := p.jobDigest[j.ID]
 	if !fetched {
-		return ""
+		// Silence here is how this feature looks broken: the status line
+		// says the digest ran, and then every row that wasn't part of it
+		// shows nothing at all. Say so instead.
+		return "\n" + helpDescStyle.Render("▸ no summary for this job — E summarises failed jobs")
 	}
 
 	var b strings.Builder

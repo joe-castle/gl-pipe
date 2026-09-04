@@ -459,6 +459,7 @@ func (m Model) startDigestBatch() (tea.Model, tea.Cmd) {
 	m.digestPending = len(failed)
 	m.digestErrored = 0
 	m.digestTotal = len(failed)
+	m.digestErrReason = ""
 
 	cmds := make([]tea.Cmd, 0, len(failed))
 	for _, j := range failed {
@@ -479,6 +480,9 @@ func (m Model) digestSummary() string {
 	summary := fmt.Sprintf("%d failed job(s) summarised, %d with an error line", m.digestTotal, found)
 	if m.digestErrored > 0 {
 		summary += fmt.Sprintf(", %d trace(s) failed to load", m.digestErrored)
+		if m.digestErrReason != "" {
+			summary += ": " + m.digestErrReason
+		}
 	}
 	return summary
 }

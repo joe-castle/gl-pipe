@@ -117,9 +117,10 @@ type Model struct {
 	// digestPending/digestErrored/digestTotal is the same tracking for a
 	// failure-digest batch (E in the job matrix: one trace fetch per failed
 	// job currently loaded).
-	digestPending int
-	digestErrored int
-	digestTotal   int
+	digestPending   int
+	digestErrored   int
+	digestTotal     int
+	digestErrReason string // first fetch error of the batch, for the summary line
 
 	// mrsPending/mrsErrored is the same tracking for a project-scoped MR
 	// fetch batch (M on the explorer, across staged projects). "My MRs"
@@ -729,6 +730,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.digestErrored++
 			d = components.JobDigest{Err: msg.err.Error()}
+			// Keep one reason for the completion summary: a batch that
+			// reports "2 trace(s) failed to load" and nothing else leaves
+			// the user with no way to find out why without hunting for the
+			// right row.
+			if m.digestErrReason == "" {
+				m.digestErrReason = msg.err.Error()
+			}
 		}
 		m.pipelineList.SetJobDigest(msg.jobID, d)
 		if m.digestPending > 0 {
