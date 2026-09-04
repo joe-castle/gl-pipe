@@ -56,6 +56,28 @@ type BulkJobActionMsg struct {
 // poll — the manual 'r' key inside either matrix.
 type RefreshRequestMsg struct{}
 
+// FailureDigestRequestMsg asks the root model to fetch the trace of every
+// failed job currently in the matrix and extract each one's first error
+// line — the 'E' key in job mode. Deliberately on demand rather than
+// automatic: the 10s auto-poll would otherwise fire a trace request per
+// failed job on every tick.
+type FailureDigestRequestMsg struct{}
+
+// JobDigest is one failed job's extracted failure summary. The three states
+// are distinct and the panel renders each differently: no map entry at all
+// means the digest hasn't been run for this job; an entry with empty Lines
+// and empty Err means the trace was read but nothing matched; Err means the
+// fetch itself failed.
+type JobDigest struct {
+	Lines []string
+	Err   string
+}
+
+// digestPanelHeight is how many rows the job table gives up to the digest
+// panel while one exists (a header line, up to 3 digest lines, and the
+// blank line separating it from the table).
+const digestPanelHeight = 5
+
 type pipelineListMode int
 
 const (
@@ -117,8 +139,9 @@ type PipelineList struct {
 	jobs        []api.Job
 	jobFiltered []api.Job // jobs after the text filter; what's actually shown
 	jobTable    table.Model
-	Pipelines   []api.Pipeline // the pipeline(s) whose jobs are currently shown
-	SelectedJ   map[int]bool   // job ID -> staged for bulk action
+	Pipelines   []api.Pipeline    // the pipeline(s) whose jobs are currently shown
+	SelectedJ   map[int]bool      // job ID -> staged for bulk action
+	jobDigest   map[int]JobDigest // job ID -> failure summary, once 'E' has run
 
 	width, height int
 }
@@ -159,6 +182,7 @@ func NewPipelineList() PipelineList {
 		projectNames: map[int]string{},
 		Selected:     map[int]bool{},
 		SelectedJ:    map[int]bool{},
+		jobDigest:    map[int]JobDigest{},
 		sortField:    sortByDate,
 		sortDesc:     true,
 		filterInput:  filter,
@@ -196,7 +220,19 @@ func (p *PipelineList) SetSize(w, h int) {
 		{Title: "DURATION", Width: jobDurationW},
 	})
 	p.jobTable.SetWidth(w)
-	p.jobTable.SetHeight(h - 3)
+	p.applyJobTableHeight()
+}
+
+// applyJobTableHeight sizes the job table, giving up rows to the failure
+// digest panel only while there's actually a digest to show — the matrix
+// must not be permanently shorter for a feature you aren't using. Called
+// from SetSize and from every place the digest map changes.
+func (p *PipelineList) applyJobTableHeight() {
+	h := p.height - 3
+	if len(p.jobDigest) > 0 {
+		h -= digestPanelHeight
+	}
+	p.jobTable.SetHeight(h)
 }
 
 // SetProjectNames supplies a project ID -> path lookup for the Project column.
@@ -460,7 +496,44 @@ func (p *PipelineList) ClearJobs() {
 	p.filtering = false
 	p.filterInput.SetValue("")
 	p.filterInput.Blur()
+	// A fresh job view is a different set of jobs entirely, so last view's
+	// failure summaries would be stale (and would keep the table shortened).
+	// AddJobs deliberately does *not* do this — see SetJobDigest.
+	p.jobDigest = map[int]JobDigest{}
+	p.applyJobTableHeight()
 	p.syncJobRows()
+}
+
+// FailedJobs returns every failed job currently loaded, ignoring the text
+// filter: the digest acts on everything in the matrix, not just what's on
+// screen, so scrolling to a row a filter had hidden still shows a summary.
+func (p *PipelineList) FailedJobs() []api.Job {
+	out := make([]api.Job, 0, len(p.jobs))
+	for _, j := range p.jobs {
+		if j.Status == api.StatusFailed {
+			out = append(out, j)
+		}
+	}
+	return out
+}
+
+// SetJobDigest records one job's failure summary. Digests deliberately
+// outlive AddJobs — the 10s auto-poll re-issues AddJobs for every shown
+// pipeline, and clearing there would make the panel flicker away seconds
+// after it appeared. Only ClearJobs (a genuinely new job view) drops them.
+func (p *PipelineList) SetJobDigest(jobID int, d JobDigest) {
+	if p.jobDigest == nil {
+		p.jobDigest = map[int]JobDigest{}
+	}
+	p.jobDigest[jobID] = d
+	p.applyJobTableHeight()
+}
+
+// JobDigestFor returns a job's failure summary, if the digest has been run
+// for it. ok distinguishes "not fetched" from "fetched, nothing matched".
+func (p *PipelineList) JobDigestFor(jobID int) (JobDigest, bool) {
+	d, ok := p.jobDigest[jobID]
+	return d, ok
 }
 
 // AddJobs merges one pipeline's jobs into the matrix (insert-or-update by
@@ -737,6 +810,8 @@ func (p PipelineList) Update(msg tea.Msg) (PipelineList, tea.Cmd) {
 			case "p":
 				targets := p.SelectedJobs()
 				return p, func() tea.Msg { return BulkJobActionMsg{Targets: targets, Play: true} }
+			case "E":
+				return p, func() tea.Msg { return FailureDigestRequestMsg{} }
 			case "a":
 				ids := make([]int, len(p.jobFiltered))
 				for i, j := range p.jobFiltered {
@@ -760,6 +835,37 @@ func (p PipelineList) Update(msg tea.Msg) (PipelineList, tea.Cmd) {
 	return p, cmd
 }
 
+// digestPanel renders the highlighted job's failure summary under the job
+// table — the same "expand the highlighted row underneath the list" idiom
+// as presetDetail. It lives outside the table on purpose: a bubbles/table
+// cell can carry no ANSI (TableStyles' doc comment) and has nowhere near
+// the width for a real error line.
+func (p PipelineList) digestPanel() string {
+	if len(p.jobDigest) == 0 {
+		return ""
+	}
+	j, ok := p.HighlightedJob()
+	if !ok {
+		return ""
+	}
+	d, fetched := p.jobDigest[j.ID]
+	if !fetched {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("▸ " + j.Stage + " · " + j.Name + "\n")
+	switch {
+	case d.Err != "":
+		b.WriteString("  couldn't read the trace: " + d.Err)
+	case len(d.Lines) == 0:
+		b.WriteString("  no error line found — enter to read the whole log")
+	default:
+		b.WriteString("  " + strings.Join(d.Lines, "\n  "))
+	}
+	return "\n" + helpDescStyle.Render(b.String())
+}
+
 func (p PipelineList) View() string {
 	if p.mode == modeJobs {
 		var header string
@@ -781,13 +887,14 @@ func (p PipelineList) View() string {
 			[2]string{"a", "stage/unstage all"},
 			[2]string{"enter", "view logs / downstream pipeline"},
 			[2]string{"p", "play manual job(s)"},
+			[2]string{"E", "why did it fail?"},
 			[2]string{"R", "bulk retry"},
 			[2]string{"K", "bulk cancel"},
 			[2]string{"/", "filter"},
 			[2]string{"r", "refresh now"},
 			[2]string{"esc", "back"},
 		)
-		return lipgloss.NewStyle().Render(header + p.jobTable.View() + help)
+		return lipgloss.NewStyle().Render(header + p.jobTable.View() + p.digestPanel() + help)
 	}
 
 	dir := "↓"

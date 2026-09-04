@@ -434,6 +434,55 @@ func (m Model) openJobsForPipelines(pipelines []api.Pipeline) (tea.Model, tea.Cm
 	return m, tea.Batch(cmds...)
 }
 
+// startDigestBatch fetches the trace of every failed job currently in the
+// job matrix and extracts each one's first error line, so a screen full of
+// failures can be triaged from the matrix instead of one log viewer visit
+// at a time. Deliberately on demand ('E'), never automatic: the 10s poll
+// would otherwise fire a trace request per failed job on every tick.
+func (m Model) startDigestBatch() (tea.Model, tea.Cmd) {
+	// loadingProgress relies on at most one batch kind being in flight at a
+	// time (the UI is modal). This is the first batch a user could fire
+	// while another is still running, so it refuses rather than break that.
+	if m.loading {
+		m.setStatus("still loading — try the digest again once that finishes")
+		return m, nil
+	}
+	failed := m.pipelineList.FailedJobs()
+	if len(failed) == 0 {
+		m.setStatus("no failed jobs in view to summarise")
+		return m, nil
+	}
+
+	id := m.newReqID()
+	m.genDigest = id
+	m.loading = true
+	m.digestPending = len(failed)
+	m.digestErrored = 0
+	m.digestTotal = len(failed)
+
+	cmds := make([]tea.Cmd, 0, len(failed))
+	for _, j := range failed {
+		cmds = append(cmds, jobDigestCmd(m.ctx, m.client, j.ProjectID, j.ID, id))
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// digestSummary reports one line for a completed digest batch, in the same
+// shape as every other batch's completion summary.
+func (m Model) digestSummary() string {
+	found := 0
+	for _, j := range m.pipelineList.FailedJobs() {
+		if d, ok := m.pipelineList.JobDigestFor(j.ID); ok && len(d.Lines) > 0 {
+			found++
+		}
+	}
+	summary := fmt.Sprintf("%d failed job(s) summarised, %d with an error line", m.digestTotal, found)
+	if m.digestErrored > 0 {
+		summary += fmt.Sprintf(", %d trace(s) failed to load", m.digestErrored)
+	}
+	return summary
+}
+
 // openDownstreamPipeline jumps from a trigger job to the pipeline it kicked
 // off, replacing the job matrix with just that one pipeline — the same
 // matrix everything else feeds, so sort/filter/Enter-into-jobs/bulk-retry

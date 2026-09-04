@@ -59,6 +59,33 @@ func TestStreamJobTrace_EmitsIncrementalChunksThenDone(t *testing.T) {
 	}
 }
 
+func TestJobTrace_ReturnsTheWholeTrace(t *testing.T) {
+	mux, client := setup(t)
+	mux.HandleFunc("/api/v4/projects/1/jobs/7/trace", func(w http.ResponseWriter, r *http.Request) {
+		testMethod(t, r, http.MethodGet)
+		fmt.Fprint(w, "line one\nline two\n")
+	})
+
+	trace, err := client.JobTrace(context.Background(), 1, 7)
+	if err != nil {
+		t.Fatalf("JobTrace: %v", err)
+	}
+	if trace != "line one\nline two\n" {
+		t.Errorf("trace = %q", trace)
+	}
+}
+
+func TestJobTrace_PropagatesError(t *testing.T) {
+	mux, client := setup(t)
+	mux.HandleFunc("/api/v4/projects/1/jobs/9/trace", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	if _, err := client.JobTrace(context.Background(), 1, 9); err == nil {
+		t.Error("expected an error for a 404 trace")
+	}
+}
+
 func TestStreamJobTrace_PropagatesError(t *testing.T) {
 	mux, client := setup(t)
 	mux.HandleFunc("/api/v4/projects/1/jobs/9/trace", func(w http.ResponseWriter, r *http.Request) {

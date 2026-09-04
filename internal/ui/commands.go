@@ -9,6 +9,7 @@ import (
 	"github.com/joeca/gl-pipe/internal/api"
 	"github.com/joeca/gl-pipe/internal/cache"
 	"github.com/joeca/gl-pipe/internal/config"
+	"github.com/joeca/gl-pipe/internal/ui/components"
 )
 
 // pollInterval is how often the pipeline/job matrix refreshes itself while
@@ -206,6 +207,25 @@ func jobsForPipelineCmd(ctx context.Context, client *api.Client, projectID, pipe
 	return safeCmd(func() tea.Msg {
 		jobs, err := client.ListJobs(ctx, projectID, pipelineID)
 		return jobsLoadedMsg{reqID: id, pipelineID: pipelineID, jobs: jobs, err: err}
+	})
+}
+
+// digestLineCount is how many lines of a failed job's trace the digest
+// keeps: the matching line plus two of following context, which is usually
+// where the actual assertion or message sits.
+const digestLineCount = 3
+
+// jobDigestCmd reads one failed job's whole trace and keeps only its first
+// error line (plus a little context) — the trace itself is discarded here
+// rather than held in the model, since the digest is a summary and the log
+// viewer already exists for reading the real thing.
+func jobDigestCmd(ctx context.Context, client *api.Client, projectID, jobID int, id reqID) tea.Cmd {
+	return safeCmd(func() tea.Msg {
+		trace, err := client.JobTrace(ctx, projectID, jobID)
+		if err != nil {
+			return jobDigestMsg{reqID: id, jobID: jobID, err: err}
+		}
+		return jobDigestMsg{reqID: id, jobID: jobID, lines: components.FirstErrorLines(trace, digestLineCount)}
 	})
 }
 

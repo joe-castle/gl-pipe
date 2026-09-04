@@ -128,6 +128,17 @@ type jobsLoadedMsg struct {
 	err        error
 }
 
+// jobDigestMsg carries one failed job's extracted failure summary — the
+// first error-looking line of its trace plus a little context. lines is
+// empty when the trace was read but nothing matched, which the panel
+// reports differently from an outright fetch failure.
+type jobDigestMsg struct {
+	reqID reqID
+	jobID int
+	lines []string
+	err   error
+}
+
 // jobActionMsg reports the outcome of a retry/cancel on a single job.
 type jobActionMsg struct {
 	reqID      reqID

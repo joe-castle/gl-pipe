@@ -9,6 +9,23 @@ import (
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 )
 
+// JobTrace fetches a job's complete trace in one shot. StreamJobTrace is
+// the wrong tool for a caller that just wants the text once — it's a
+// polling producer that keeps running until the job finishes — so the
+// failure digest, which reads many jobs' traces and keeps only a line from
+// each, uses this instead.
+func (c *Client) JobTrace(ctx context.Context, projectID, jobID int) (string, error) {
+	reader, _, err := c.gl.Jobs.GetTraceFile(projectID, int64(jobID), gitlab.WithContext(ctx))
+	if err != nil {
+		return "", fmt.Errorf("fetching trace for job %d in project %d: %w", jobID, projectID, err)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return "", fmt.Errorf("reading trace for job %d in project %d: %w", jobID, projectID, err)
+	}
+	return string(data), nil
+}
+
 // StreamJobTrace polls a job's trace endpoint (GitLab has no incremental
 // trace API — each poll returns the full trace so far) and pushes only the
 // newly-appended suffix on chunks, computing the diff client-side. It runs

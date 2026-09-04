@@ -757,3 +757,159 @@ func TestPipelineList_SelectAllJobsRespectsActiveFilter(t *testing.T) {
 		t.Fatalf("expected 'a' to stage only the filtered job (11), got %+v", updated.SelectedJ)
 	}
 }
+
+// --- failure digest (backlog 036) ---
+
+func TestPipelineList_FailedJobsFiltersToFailuresOnly(t *testing.T) {
+	p := NewPipelineList()
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{
+		{ID: 10, Name: "unit", Status: api.StatusFailed},
+		{ID: 11, Name: "build", Status: api.StatusSuccess},
+		{ID: 12, Name: "e2e", Status: api.StatusFailed},
+		{ID: 13, Name: "deploy", Status: api.StatusManual},
+	})
+
+	failed := p.FailedJobs()
+	if len(failed) != 2 {
+		t.Fatalf("expected 2 failed jobs, got %d: %+v", len(failed), failed)
+	}
+	if failed[0].ID != 10 || failed[1].ID != 12 {
+		t.Errorf("unexpected failed jobs: %+v", failed)
+	}
+}
+
+func TestPipelineList_FailedJobsIgnoresTheTextFilter(t *testing.T) {
+	// The digest acts on everything loaded, not just what a '/' filter
+	// happens to be showing — otherwise a filter narrows what you fetch and
+	// the panel is silently empty for rows you scroll to afterwards.
+	p := NewPipelineList()
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{
+		{ID: 10, Name: "unit", Status: api.StatusFailed},
+		{ID: 11, Name: "e2e", Status: api.StatusFailed},
+	})
+	p.filterInput.SetValue("unit")
+	p.syncJobRows()
+
+	if len(p.FailedJobs()) != 2 {
+		t.Fatalf("expected both failed jobs regardless of the filter, got %+v", p.FailedJobs())
+	}
+}
+
+func TestPipelineList_JobDigestSurvivesAPollRefreshButNotANewJobView(t *testing.T) {
+	p := NewPipelineList()
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Status: api.StatusFailed}})
+	p.SetJobDigest(10, JobDigest{Lines: []string{"FAILED: boom"}})
+
+	// The 10s auto-poll re-issues AddJobs for every shown pipeline; wiping
+	// the digest there would make it vanish seconds after it arrived.
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Status: api.StatusFailed}})
+	if d, ok := p.JobDigestFor(10); !ok || len(d.Lines) != 1 {
+		t.Fatalf("digest lost across a poll refresh: %+v ok=%v", d, ok)
+	}
+
+	// A fresh job view is a different set of jobs entirely.
+	p.ClearJobs()
+	if _, ok := p.JobDigestFor(10); ok {
+		t.Fatal("digest survived ClearJobs")
+	}
+}
+
+func TestPipelineList_CapitalEInJobModeRequestsTheDigest(t *testing.T) {
+	p := NewPipelineList()
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Status: api.StatusFailed}})
+
+	_, cmd := p.Update(runeKey('E'))
+	if cmd == nil {
+		t.Fatal("expected a Cmd for 'E'")
+	}
+	if _, ok := cmd().(FailureDigestRequestMsg); !ok {
+		t.Fatalf("expected FailureDigestRequestMsg, got %T", cmd())
+	}
+}
+
+func TestPipelineList_CapitalEDoesNothingInPipelineMode(t *testing.T) {
+	p := NewPipelineList()
+	p.SetPipelines([]api.Pipeline{{ID: 1, ProjectID: 10}})
+
+	if _, cmd := p.Update(runeKey('E')); cmd != nil {
+		if _, ok := cmd().(FailureDigestRequestMsg); ok {
+			t.Fatal("digest must not be reachable from the pipeline matrix")
+		}
+	}
+}
+
+func TestPipelineList_ViewShowsTheDigestForTheHighlightedJob(t *testing.T) {
+	p := NewPipelineList()
+	p.SetSize(120, 30)
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Name: "unit", Status: api.StatusFailed}})
+	p.SetJobDigest(10, JobDigest{Lines: []string{"FAILED: token_test.go:88", "expected 200, got 401"}})
+
+	view := p.View()
+	if !strings.Contains(view, "token_test.go:88") || !strings.Contains(view, "expected 200, got 401") {
+		t.Fatalf("digest missing from the job view:\n%s", view)
+	}
+}
+
+func TestPipelineList_ViewSaysSoWhenATraceHadNoErrorLine(t *testing.T) {
+	// "fetched, nothing matched" must read differently from "not fetched",
+	// or a job with an unhelpful trace looks like the digest never ran.
+	p := NewPipelineList()
+	p.SetSize(120, 30)
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Name: "unit", Status: api.StatusFailed}})
+	p.SetJobDigest(10, JobDigest{})
+
+	if !strings.Contains(p.View(), "no error line") {
+		t.Fatalf("expected an explicit no-match message:\n%s", p.View())
+	}
+}
+
+func TestPipelineList_ViewShowsADigestFetchError(t *testing.T) {
+	p := NewPipelineList()
+	p.SetSize(120, 30)
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Name: "unit", Status: api.StatusFailed}})
+	p.SetJobDigest(10, JobDigest{Err: "403 forbidden"})
+
+	if !strings.Contains(p.View(), "403 forbidden") {
+		t.Fatalf("expected the fetch error in the panel:\n%s", p.View())
+	}
+}
+
+func TestPipelineList_ViewHasNoDigestPanelBeforeTheDigestRuns(t *testing.T) {
+	p := NewPipelineList()
+	p.SetSize(120, 30)
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Name: "unit", Status: api.StatusFailed}})
+
+	if strings.Contains(p.View(), "no error line") {
+		t.Fatal("un-fetched job must not render the no-match message")
+	}
+}
+
+// The job table shrinks to make room for the panel, but only once there is
+// a panel to make room for — the matrix must not be permanently shorter for
+// a feature you are not using.
+func TestPipelineList_JobTableHeightOnlyShrinksWhileADigestExists(t *testing.T) {
+	p := NewPipelineList()
+	p.SetSize(120, 30)
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Status: api.StatusFailed}})
+	full := p.jobTable.Height()
+
+	p.SetJobDigest(10, JobDigest{Lines: []string{"boom"}})
+	shrunk := p.jobTable.Height()
+	if shrunk >= full {
+		t.Fatalf("expected the job table to shrink for the panel: %d -> %d", full, shrunk)
+	}
+
+	p.ClearJobs()
+	if p.jobTable.Height() != full {
+		t.Fatalf("expected the height restored after ClearJobs: got %d, want %d", p.jobTable.Height(), full)
+	}
+}

@@ -1177,3 +1177,126 @@ func TestHandleKey_EscOnAnUnrelatedPipelineViewGoesToExplorer(t *testing.T) {
 		t.Fatalf("expected Esc to go to paneExplorer, got %v", mm.pane)
 	}
 }
+
+// --- failure digest (backlog 036) ---
+
+func TestUpdate_DigestRequestFetchesOnlyFailedJobs(t *testing.T) {
+	m := newTestModel(t)
+	m.pane = panePipelines
+	m.pipelineList.SetPipelines([]api.Pipeline{{ID: 1, ProjectID: 10}})
+	m.pipelineList.ClearJobs()
+	m.pipelineList.AddJobs(api.Pipeline{ID: 1, ProjectID: 10}, []api.Job{
+		{ID: 100, ProjectID: 10, Status: api.StatusFailed},
+		{ID: 101, ProjectID: 10, Status: api.StatusSuccess},
+		{ID: 102, ProjectID: 10, Status: api.StatusFailed},
+	})
+
+	updated, cmd := m.Update(components.FailureDigestRequestMsg{})
+	mm := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a batch Cmd")
+	}
+	if mm.digestTotal != 2 || mm.digestPending != 2 {
+		t.Fatalf("digestTotal=%d digestPending=%d, want 2/2 (failed jobs only)", mm.digestTotal, mm.digestPending)
+	}
+	if !mm.loading {
+		t.Error("expected loading true while the digest batch runs")
+	}
+}
+
+func TestUpdate_DigestRequestWithNoFailuresSaysSoAndFetchesNothing(t *testing.T) {
+	m := newTestModel(t)
+	m.pane = panePipelines
+	m.pipelineList.ClearJobs()
+	m.pipelineList.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 100, Status: api.StatusSuccess}})
+
+	updated, cmd := m.Update(components.FailureDigestRequestMsg{})
+	mm := updated.(Model)
+	if cmd != nil {
+		t.Fatal("expected no Cmd when nothing failed")
+	}
+	if mm.statusMsg == "" {
+		t.Error("expected a status message explaining why nothing happened")
+	}
+}
+
+// loadingProgress documents that at most one batch kind is ever in flight,
+// because the UI is modal. The digest is the first batch a user could fire
+// while another is still running, so it has to refuse rather than break
+// that invariant.
+func TestUpdate_DigestRequestRefusesWhileAnotherBatchIsLoading(t *testing.T) {
+	m := newTestModel(t)
+	m.pane = panePipelines
+	m.pipelineList.ClearJobs()
+	m.pipelineList.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 100, Status: api.StatusFailed}})
+	m.loading = true
+	m.jobsPending, m.jobsTotal = 1, 1
+
+	updated, cmd := m.Update(components.FailureDigestRequestMsg{})
+	mm := updated.(Model)
+	if cmd != nil {
+		t.Fatal("expected no Cmd while another batch is in flight")
+	}
+	if mm.digestPending != 0 {
+		t.Fatalf("digestPending = %d, want 0", mm.digestPending)
+	}
+}
+
+func TestUpdate_JobDigestTracksPendingAndClearsLoadingOnlyOnceBatchCompletes(t *testing.T) {
+	m := newTestModel(t)
+	m.pipelineList.ClearJobs()
+	m.pipelineList.AddJobs(api.Pipeline{ID: 1}, []api.Job{
+		{ID: 100, Status: api.StatusFailed},
+		{ID: 101, Status: api.StatusFailed},
+	})
+	m.genDigest = 9
+	m.digestPending, m.digestTotal = 2, 2
+	m.loading = true
+
+	updated, _ := m.Update(jobDigestMsg{reqID: 9, jobID: 100, lines: []string{"FAILED: boom"}})
+	mm := updated.(Model)
+	if !mm.loading {
+		t.Fatal("expected loading to stay true with a response still outstanding")
+	}
+	if d, ok := mm.pipelineList.JobDigestFor(100); !ok || len(d.Lines) != 1 {
+		t.Fatalf("digest not recorded: %+v ok=%v", d, ok)
+	}
+
+	updated, _ = mm.Update(jobDigestMsg{reqID: 9, jobID: 101, err: errBoom})
+	mm = updated.(Model)
+	if mm.loading {
+		t.Fatal("expected loading false once both responses are in")
+	}
+	// A failed fetch is still recorded, so the panel can say why rather than
+	// looking like the digest was never run for that job.
+	d, ok := mm.pipelineList.JobDigestFor(101)
+	if !ok || d.Err == "" {
+		t.Fatalf("expected an errored digest entry for 101, got %+v ok=%v", d, ok)
+	}
+}
+
+func TestUpdate_DropsStaleJobDigestMsg(t *testing.T) {
+	m := newTestModel(t)
+	m.pipelineList.ClearJobs()
+	m.pipelineList.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 100, Status: api.StatusFailed}})
+	m.genDigest = 9
+	m.digestPending, m.digestTotal = 1, 1
+
+	updated, _ := m.Update(jobDigestMsg{reqID: 8, jobID: 100, lines: []string{"stale"}})
+	mm := updated.(Model)
+	if _, ok := mm.pipelineList.JobDigestFor(100); ok {
+		t.Fatal("a stale reqID must not write a digest")
+	}
+	if mm.digestPending != 1 {
+		t.Fatalf("digestPending = %d, want 1 (untouched by a stale response)", mm.digestPending)
+	}
+}
+
+func TestLoadingProgress_ReportsTheDigestBatch(t *testing.T) {
+	m := newTestModel(t)
+	m.digestPending, m.digestTotal = 4, 12
+	done, total, ok := m.loadingProgress()
+	if !ok || done != 8 || total != 12 {
+		t.Fatalf("got done=%d total=%d ok=%v, want 8,12,true", done, total, ok)
+	}
+}

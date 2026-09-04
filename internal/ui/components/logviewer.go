@@ -13,6 +13,55 @@ import (
 
 var errorLinePattern = regexp.MustCompile(`(?i)\b(error|fail(ed|ure)?|fatal|panic|exception)\b`)
 
+// ansiPattern matches the CSI escape sequences GitLab traces are full of.
+// The log viewer keeps them (a viewport renders them correctly); anything
+// pulling trace text *out* of the viewer has to strip them, both because
+// the destination isn't ANSI-aware and because bubbles/table measures
+// width with go-runewidth, which counts escape bytes as visible characters.
+var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+// stripANSI removes colour escapes and carriage returns from one trace line.
+func stripANSI(line string) string {
+	return strings.TrimSpace(strings.ReplaceAll(ansiPattern.ReplaceAllString(line, ""), "\r", ""))
+}
+
+// FirstErrorLines returns the first error-looking line of a job trace plus
+// up to n-1 following non-empty lines of context, all ANSI- and CR-stripped.
+// It returns nothing when the trace has no match.
+//
+// This shares errorLinePattern with the log viewer's own 'E' (jump to first
+// error) deliberately, so the failure digest and the log viewer can never
+// disagree about what counts as an error line.
+//
+// First-match is a heuristic and can land on noise — a dependency whose name
+// contains "error", say. If that proves annoying in practice the fix is to
+// skip the runner's own boilerplate (section_start/section_end, the trailing
+// "ERROR: Job failed") and prefer the last meaningful match; not worth
+// building speculatively.
+func FirstErrorLines(trace string, n int) []string {
+	if n < 1 {
+		return nil
+	}
+	lines := strings.Split(trace, "\n")
+	for i, raw := range lines {
+		line := stripANSI(raw)
+		if line == "" || !errorLinePattern.MatchString(line) {
+			continue
+		}
+		out := []string{line}
+		for _, follow := range lines[i+1:] {
+			if len(out) >= n {
+				break
+			}
+			if s := stripANSI(follow); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 // LogViewer streams one job's trace into a scrollable, ANSI-aware viewport
 // with in-buffer search and jump-to-first-error.
 //

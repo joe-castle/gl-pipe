@@ -114,6 +114,13 @@ type Model struct {
 	jobsErrored int
 	jobsTotal   int
 
+	// digestPending/digestErrored/digestTotal is the same tracking for a
+	// failure-digest batch (E in the job matrix: one trace fetch per failed
+	// job currently loaded).
+	digestPending int
+	digestErrored int
+	digestTotal   int
+
 	// mrsPending/mrsErrored is the same tracking for a project-scoped MR
 	// fetch batch (M on the explorer, across staged projects). "My MRs"
 	// (<Space> m) is a single global request and doesn't need this.
@@ -182,6 +189,7 @@ type Model struct {
 	genBlob      reqID
 	genRefs      reqID
 	genRefPicker reqID
+	genDigest    reqID
 
 	logCancel context.CancelFunc
 	logJobURL string
@@ -311,6 +319,8 @@ func (m Model) loadingProgress() (done, total int, ok bool) {
 		return m.pipelinesTotal - m.pipelinesPending, m.pipelinesTotal, true
 	case m.jobsPending > 0 && m.jobsTotal > 0:
 		return m.jobsTotal - m.jobsPending, m.jobsTotal, true
+	case m.digestPending > 0 && m.digestTotal > 0:
+		return m.digestTotal - m.digestPending, m.digestTotal, true
 	case m.mrsPending > 0 && m.mrsTotal > 0:
 		return m.mrsTotal - m.mrsPending, m.mrsTotal, true
 	case m.refsPending > 0 && m.refsTotal > 0:
@@ -702,6 +712,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.jobsErrored > 0 {
 				m.setStatus(fmt.Sprintf("jobs loaded (%d pipeline(s) failed to load)", m.jobsErrored))
 			}
+		}
+		return m, nil
+
+	case components.FailureDigestRequestMsg:
+		return m.startDigestBatch()
+
+	case jobDigestMsg:
+		if msg.reqID != m.genDigest {
+			return m, nil
+		}
+		// A failed fetch is recorded too, not dropped: the panel says why,
+		// which reads very differently from a job that looks like the digest
+		// was never run for it.
+		d := components.JobDigest{Lines: msg.lines}
+		if msg.err != nil {
+			m.digestErrored++
+			d = components.JobDigest{Err: msg.err.Error()}
+		}
+		m.pipelineList.SetJobDigest(msg.jobID, d)
+		if m.digestPending > 0 {
+			m.digestPending--
+		}
+		if m.digestPending == 0 {
+			m.loading = false
+			m.setStatus(m.digestSummary())
 		}
 		return m, nil
 

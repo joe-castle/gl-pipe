@@ -216,11 +216,26 @@ The matrix polls automatically every 10s while any pipeline shown hasn't reached
 | `x` | Stage/unstage a job for a bulk action |
 | `a` | Stage/unstage all jobs currently loaded |
 | `Enter` | Stream that job's live log — or, on a deploy/trigger job, jump to the downstream pipeline it kicked off |
+| `E` | Failure digest: why did they fail? (see below) |
 | `R` | Bulk retry the staged (or highlighted) job(s) |
 | `K` | Bulk cancel the staged (or highlighted) job(s) |
 | `/` | Filter by job name, stage, status, project, or runner (substring, case-insensitive) |
 | `r` | Refresh now, without waiting for the next automatic poll |
 | `Esc` | Back to the pipeline matrix |
+
+#### Failure digest (`E`)
+
+With a dozen failures spread across nine repos, "what actually broke?" shouldn't mean opening the log viewer a dozen times. `E` fetches the trace of **every failed job currently loaded** (not just what a `/` filter is showing) and pulls out each one's first error-looking line plus a couple of lines of context. Move the cursor over a failed job and its summary appears in a panel under the table:
+
+```
+▸ test · unit
+  FAILED: src/auth/token_test.go:88
+  expected 200, got 401
+```
+
+It runs only when you press `E` — never automatically — so the 10s poll can't turn into a burst of trace requests. The summaries survive polling but are cleared when you open a different set of jobs. A job whose trace had no recognisable error line says so explicitly rather than looking un-fetched; `Enter` still opens the full log for anything the one-line summary doesn't settle.
+
+The heuristic is the same regex the log viewer's own `E` (jump to first error) uses, so the two never disagree. It matches on the *first* occurrence, which can occasionally land on noise like a dependency whose name contains "error" — the full log is one keystroke away when it does.
 
 Showing jobs from more than one pipeline adds `Project` and `Pipeline` (`#IID`) columns so you can tell which job belongs to which run. The same automatic polling as the pipeline matrix applies here, keyed off the jobs' own statuses rather than the parent pipeline's. `/` works exactly like the pipeline matrix's: it narrows what's already loaded, staged jobs (`x`) stay staged even if a filter later hides them, and `a` (stage/unstage all) respects the active filter.
 
