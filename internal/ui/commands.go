@@ -223,6 +223,13 @@ func cancelJobCmd(ctx context.Context, client *api.Client, projectID, pipelineID
 	})
 }
 
+func playJobCmd(ctx context.Context, client *api.Client, projectID, pipelineID, jobID int, id reqID) tea.Cmd {
+	return safeCmd(func() tea.Msg {
+		err := client.PlayJob(ctx, projectID, jobID)
+		return jobActionMsg{reqID: id, projectID: projectID, pipelineID: pipelineID, jobID: jobID, err: err}
+	})
+}
+
 // startLogStreamCmd launches the trace-polling goroutine and hands its
 // channel back via logStreamReadyMsg; Update then drives it with
 // waitForLogChunkCmd (invariant #3). The producer outlives the Cmd, so it

@@ -235,3 +235,15 @@ func (c *Client) CancelJob(ctx context.Context, projectID, jobID int) error {
 	}
 	return nil
 }
+
+// PlayJob plays a manual job (status "manual"), triggering it to run.
+// This is the API equivalent of clicking the ▶ button on a manual job
+// in the GitLab UI — including bridge (trigger) jobs that require manual
+// confirmation before they kick off their downstream pipeline.
+func (c *Client) PlayJob(ctx context.Context, projectID, jobID int) error {
+	_, _, err := c.gl.Jobs.PlayJob(projectID, int64(jobID), nil, gitlab.WithContext(ctx))
+	if err != nil {
+		return fmt.Errorf("playing job %d in project %d: %w", jobID, projectID, err)
+	}
+	return nil
+}

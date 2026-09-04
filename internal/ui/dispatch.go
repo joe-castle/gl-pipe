@@ -558,9 +558,12 @@ func (m Model) bulkJobAction(msg components.BulkJobActionMsg) (tea.Model, tea.Cm
 	cmds := make([]tea.Cmd, 0, len(msg.Targets))
 	for _, j := range msg.Targets {
 		id := m.newReqID()
-		if msg.Retry {
+		switch {
+		case msg.Play:
+			cmds = append(cmds, playJobCmd(m.ctx, m.client, j.ProjectID, j.PipelineID, j.ID, id))
+		case msg.Retry:
 			cmds = append(cmds, retryJobCmd(m.ctx, m.client, j.ProjectID, j.PipelineID, j.ID, id))
-		} else {
+		default:
 			cmds = append(cmds, cancelJobCmd(m.ctx, m.client, j.ProjectID, j.PipelineID, j.ID, id))
 		}
 	}

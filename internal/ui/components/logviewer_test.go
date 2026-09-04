@@ -70,7 +70,7 @@ func TestLogViewer_OpenResetsBufferForNewJob(t *testing.T) {
 	if l.Done {
 		t.Fatal("expected Done reset on Open")
 	}
-	if len(l.lines) != 0 || l.content.Len() != 0 {
-		t.Fatalf("expected empty buffer after Open, got lines=%+v content=%q", l.lines, l.content.String())
+	if len(l.lines) != 0 || l.content != "" {
+		t.Fatalf("expected empty buffer after Open, got lines=%+v content=%q", l.lines, l.content)
 	}
 }

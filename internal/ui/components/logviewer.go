@@ -15,13 +15,22 @@ var errorLinePattern = regexp.MustCompile(`(?i)\b(error|fail(ed|ure)?|fatal|pani
 
 // LogViewer streams one job's trace into a scrollable, ANSI-aware viewport
 // with in-buffer search and jump-to-first-error.
+//
+// NOTE: the content field must remain a plain string, not a strings.Builder.
+// LogViewer is a value type (stored by value in ui.Model, passed by value to
+// View()). strings.Builder must not be copied after first use — copying it
+// shares the internal []byte buffer, and a subsequent WriteString/grow that
+// reallocates the buffer leaves the copy holding a dangling pointer, which
+// the GC scanner reports as "bad pointer in Go heap" during the next GC
+// cycle. A plain string is safe to copy: the string value is immutable even
+// though the field is reassigned on each Append call.
 type LogViewer struct {
 	Active bool
 	JobID  int
 	Done   bool
 
 	viewport viewport.Model
-	content  strings.Builder
+	content  string
 	lines    []string
 
 	searching   bool
@@ -47,7 +56,7 @@ func (l *LogViewer) Open(jobID int) {
 	l.Active = true
 	l.JobID = jobID
 	l.Done = false
-	l.content.Reset()
+	l.content = ""
 	l.lines = nil
 	l.matches = nil
 	l.autoScroll = true
@@ -62,9 +71,9 @@ func (l *LogViewer) SetSize(w, h int) {
 
 // Append adds an incremental chunk of trace output.
 func (l *LogViewer) Append(text string) {
-	l.content.WriteString(text)
-	l.lines = strings.Split(l.content.String(), "\n")
-	l.viewport.SetContent(l.content.String())
+	l.content += text
+	l.lines = strings.Split(l.content, "\n")
+	l.viewport.SetContent(l.content)
 	if l.autoScroll {
 		l.viewport.GotoBottom()
 	}

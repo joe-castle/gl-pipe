@@ -44,9 +44,11 @@ type BulkPipelineActionMsg struct {
 }
 
 // BulkJobActionMsg is the job-matrix equivalent of BulkPipelineActionMsg.
+// Retry and Play are mutually exclusive; both false means cancel.
 type BulkJobActionMsg struct {
 	Targets []api.Job
 	Retry   bool
+	Play    bool
 }
 
 // RefreshRequestMsg asks the root model to immediately re-fetch whatever's
@@ -569,6 +571,11 @@ func jobRunnerCell(j api.Job) string {
 		return j.RunnerTag
 	}
 	if j.DownstreamPipelineID == 0 {
+		// Manual bridge not yet played shows its own status; a played bridge
+		// whose downstream pipeline hasn't been created yet shows as pending.
+		if j.Status == api.StatusManual {
+			return "→ (manual — press p)"
+		}
 		return "→ (pending)"
 	}
 	return fmt.Sprintf("→ #%d %s", j.DownstreamPipelineIID, StatusIcon(j.DownstreamStatus))
@@ -727,6 +734,9 @@ func (p PipelineList) Update(msg tea.Msg) (PipelineList, tea.Cmd) {
 				targets := p.SelectedJobs()
 				retry := km.String() == "R"
 				return p, func() tea.Msg { return BulkJobActionMsg{Targets: targets, Retry: retry} }
+			case "p":
+				targets := p.SelectedJobs()
+				return p, func() tea.Msg { return BulkJobActionMsg{Targets: targets, Play: true} }
 			case "a":
 				ids := make([]int, len(p.jobFiltered))
 				for i, j := range p.jobFiltered {
@@ -770,6 +780,7 @@ func (p PipelineList) View() string {
 			[2]string{"x", "stage"},
 			[2]string{"a", "stage/unstage all"},
 			[2]string{"enter", "view logs / downstream pipeline"},
+			[2]string{"p", "play manual job(s)"},
 			[2]string{"R", "bulk retry"},
 			[2]string{"K", "bulk cancel"},
 			[2]string{"/", "filter"},
