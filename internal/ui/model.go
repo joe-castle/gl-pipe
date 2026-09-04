@@ -420,6 +420,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.teardown()
 			return m, tea.Quit
 		}
+		// Intercepted ahead of every modal and pane so a diagnostic dump is
+		// always reachable, whatever has focus.
+		if msg.String() == "ctrl+d" {
+			return m.dumpDebugState()
+		}
 		return m.handleKey(msg)
 
 	case components.WizardSubmitMsg:

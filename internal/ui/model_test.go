@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1298,5 +1299,31 @@ func TestLoadingProgress_ReportsTheDigestBatch(t *testing.T) {
 	done, total, ok := m.loadingProgress()
 	if !ok || done != 8 || total != 12 {
 		t.Fatalf("got done=%d total=%d ok=%v, want 8,12,true", done, total, ok)
+	}
+}
+
+func TestCtrlD_WritesADebugSnapshot(t *testing.T) {
+	m := newTestModel(t)
+	m.pane = panePipelines
+	m.pipelineList.ClearJobs()
+	m.pipelineList.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Name: "unit", Status: api.StatusFailed}})
+	m.pipelineList.SetJobDigest(10, components.JobDigest{Lines: []string{"FAILED: boom"}})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	mm := updated.(Model)
+
+	path := filepath.Join(mm.cacheDir, "debug.log")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading debug dump: %v", err)
+	}
+	body := string(data)
+	for _, want := range []string{"gl-pipe debug", "digestEntries=1", "highlighted=", "panelEmpty="} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dump missing %q:\n%s", want, body)
+		}
+	}
+	if !strings.Contains(mm.statusMsg, "debug.log") {
+		t.Errorf("expected the status line to name the file, got %q", mm.statusMsg)
 	}
 }

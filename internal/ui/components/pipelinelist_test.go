@@ -986,3 +986,29 @@ func TestPipelineList_DigestPanelIsVisuallySeparatedFromTheHelpLine(t *testing.T
 		t.Fatalf("expected the summary below the rule, not above it:\n%s", view)
 	}
 }
+
+func TestPipelineList_DebugStateReportsWhatTheDigestPanelDependsOn(t *testing.T) {
+	p := NewPipelineList()
+	p.SetSize(120, 30)
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{
+		{ID: 10, Name: "unit", Stage: "test", Status: api.StatusFailed},
+		{ID: 11, Name: "build", Stage: "build", Status: api.StatusSuccess},
+	})
+	p.SetJobDigest(10, JobDigest{Lines: []string{"FAILED: boom"}})
+
+	got := p.DebugState()
+	for _, want := range []string{
+		"mode=jobs",
+		"jobs=2",
+		"jobFiltered=2",
+		"cursor=0",
+		"digestEntries=1",
+		"highlighted=",
+		"panelEmpty=",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("DebugState missing %q:\n%s", want, got)
+		}
+	}
+}

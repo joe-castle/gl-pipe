@@ -893,6 +893,49 @@ func (p PipelineList) digestPanel() string {
 	return "\n" + rule + "\n" + b.String()
 }
 
+// DebugState reports the state the digest panel actually depends on, for
+// ctrl+d's diagnostic dump: whether a digest exists, whether a row is
+// highlighted, and whether the panel therefore renders. Every early return
+// in digestPanel is observable here, so a "nothing shows" report can be
+// narrowed to one cause without guessing.
+func (p PipelineList) DebugState() string {
+	mode := "pipelines"
+	if p.mode == modeJobs {
+		mode = "jobs"
+	}
+
+	digestKeys := make([]int, 0, len(p.jobDigest))
+	for id := range p.jobDigest {
+		digestKeys = append(digestKeys, id)
+	}
+	sort.Ints(digestKeys)
+
+	highlighted := "<none>"
+	digestForHighlighted := "n/a"
+	if j, ok := p.HighlightedJob(); ok {
+		highlighted = fmt.Sprintf("id=%d name=%q stage=%q status=%s bridge=%v", j.ID, j.Name, j.Stage, j.Status, j.IsBridge)
+		if d, has := p.jobDigest[j.ID]; has {
+			digestForHighlighted = fmt.Sprintf("lines=%d err=%q", len(d.Lines), d.Err)
+		} else {
+			digestForHighlighted = "<no entry for this job>"
+		}
+	}
+
+	panel := p.digestPanel()
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "  mode=%s size=%dx%d jobTableHeight=%d\n", mode, p.width, p.height, p.jobTable.Height())
+	fmt.Fprintf(&b, "  jobs=%d jobFiltered=%d cursor=%d filter=%q filtering=%v\n",
+		len(p.jobs), len(p.jobFiltered), p.jobTable.Cursor(), p.filterInput.Value(), p.filtering)
+	fmt.Fprintf(&b, "  pipelinesInView=%d selectedJobs=%d\n", len(p.Pipelines), len(p.SelectedJ))
+	fmt.Fprintf(&b, "  digestEntries=%d keys=%v\n", len(p.jobDigest), digestKeys)
+	fmt.Fprintf(&b, "  highlighted=%s\n", highlighted)
+	fmt.Fprintf(&b, "  digestForHighlighted=%s\n", digestForHighlighted)
+	fmt.Fprintf(&b, "  panelEmpty=%v panelLen=%d\n", panel == "", len(panel))
+	fmt.Fprintf(&b, "  panelRaw=%q\n", panel)
+	return b.String()
+}
+
 // digestRuleWidth keeps the separator inside the pane even before the first
 // WindowSizeMsg has set a width.
 func (p PipelineList) digestRuleWidth() int {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -466,6 +468,41 @@ func (m Model) startDigestBatch() (tea.Model, tea.Cmd) {
 		cmds = append(cmds, jobDigestCmd(m.ctx, m.client, j.ProjectID, j.ID, id))
 	}
 	return m, tea.Batch(cmds...)
+}
+
+// dumpDebugState appends a snapshot of the UI's state to debug.log next to
+// config.yaml (ctrl+d). The alt screen makes in-app diagnostics useless for
+// anything more than one line, and "I press the key and see nothing" is not
+// something the status bar can answer — a file the user can paste back is.
+func (m Model) dumpDebugState() (tea.Model, tea.Cmd) {
+	path := filepath.Join(m.cacheDir, "debug.log")
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n=== gl-pipe debug %s ===\n", time.Now().Format(time.RFC3339))
+	fmt.Fprintf(&b, "view=%d pane=%d size=%dx%d loading=%v\n", m.view, m.pane, m.width, m.height, m.loading)
+	fmt.Fprintf(&b, "status=%q statusErr=%v\n", m.statusMsg, m.statusErr)
+	fmt.Fprintf(&b, "batches: pipelines=%d/%d jobs=%d/%d digest=%d/%d errored=%d\n",
+		m.pipelinesPending, m.pipelinesTotal, m.jobsPending, m.jobsTotal,
+		m.digestPending, m.digestTotal, m.digestErrored)
+	fmt.Fprintf(&b, "generations: pipelines=%d jobs=%d digest=%d\n", m.genPipelines, m.genJobs, m.genDigest)
+	fmt.Fprintf(&b, "modals: logViewer=%v variables=%v settings=%v presets=%v groupPicker=%v refSearch=%v mrList=%v\n",
+		m.logViewer.Active, m.variables.Active, m.settings.Active, m.presets.Active,
+		m.groupPicker.Active, m.refSearch.Active, m.mrList.Active)
+	b.WriteString("pipelineList:\n")
+	b.WriteString(m.pipelineList.DebugState())
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		m.setErr(fmt.Errorf("writing debug dump: %w", err))
+		return m, nil
+	}
+	defer f.Close()
+	if _, err := f.WriteString(b.String()); err != nil {
+		m.setErr(fmt.Errorf("writing debug dump: %w", err))
+		return m, nil
+	}
+	m.setStatus("debug snapshot appended to " + path)
+	return m, nil
 }
 
 // digestSummary reports one line for a completed digest batch, in the same
