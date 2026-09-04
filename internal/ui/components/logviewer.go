@@ -25,41 +25,77 @@ func stripANSI(line string) string {
 	return strings.TrimSpace(strings.ReplaceAll(ansiPattern.ReplaceAllString(line, ""), "\r", ""))
 }
 
-// FirstErrorLines returns the first error-looking line of a job trace plus
-// up to n-1 following non-empty lines of context, all ANSI- and CR-stripped.
-// It returns nothing when the trace has no match.
+// traceNoisePattern matches the lines GitLab's runner writes around the job
+// script itself: the setup preamble, and — the part that actually matters —
+// the epilogue that comes *after* the failure (cache/artifact upload, the
+// cleanup notice, and the runner's own "ERROR: Job failed" verdict).
 //
-// This shares errorLinePattern with the log viewer's own 'E' (jump to first
-// error) deliberately, so the failure digest and the log viewer can never
-// disagree about what counts as an error line.
+// Without stripping the epilogue, the tail of a trace is never the failure.
+// Without stripping the verdict, every failed job "fails" for the same
+// useless reason.
+var traceNoisePattern = regexp.MustCompile(`^(section_(start|end):|Running with gitlab-runner|Preparing |Getting source from|Fetching changes|Reinitialized existing|Initialized empty|Created fresh repository|Checking out |Skipping Git|Executing "|Using |Restoring cache|Checking cache|Successfully extracted cache|Creating cache|Downloading artifacts|Uploading artifacts|Cleaning up project directory|Job succeeded|Saving cache|WARNING: |ERROR: Job failed)`)
+
+// jobFailedPattern captures the runner's verdict line so the exit code can
+// be reported alongside the summary rather than *as* it.
+var jobFailedPattern = regexp.MustCompile(`^ERROR: Job failed\s*(?:\((.*?)\))?\s*:?\s*(.*)$`)
+
+// FailureSummary extracts the most likely cause of a failed job from its
+// trace: the last n meaningful lines, ANSI-stripped, with the runner's own
+// boilerplate removed. Empty when the trace holds nothing but boilerplate.
 //
-// First-match is a heuristic and can land on noise — a dependency whose name
-// contains "error", say. If that proves annoying in practice the fix is to
-// skip the runner's own boilerplate (section_start/section_end, the trailing
-// "ERROR: Job failed") and prefer the last meaningful match; not worth
-// building speculatively.
-func FirstErrorLines(trace string, n int) []string {
+// The tail, not the first "error"-looking line. This started out matching
+// errorLinePattern (the same regex the log viewer's 'E' jumps to) forwards
+// from the top, which failed on the most ordinary CI failure there is:
+//
+//	$ mvn clean install
+//	/bin/bash: line 123: mvn: command not found
+//	ERROR: Job failed: exit code 127
+//
+// Nothing in "command not found" matches error|failed|fatal|panic|exception,
+// so the only match in the whole trace was GitLab's own verdict line, and
+// every such job was reported as having failed because it failed. A build
+// tool prints its diagnosis at the end and the shell prints its complaint
+// where it happened — which is the end of the job script either way — so the
+// tail is the reliable primitive here, and it needs no vocabulary of error
+// words at all.
+func FailureSummary(trace string, n int) []string {
 	if n < 1 {
 		return nil
 	}
-	lines := strings.Split(trace, "\n")
-	for i, raw := range lines {
+	var meaningful []string
+	for _, raw := range strings.Split(trace, "\n") {
 		line := stripANSI(raw)
-		if line == "" || !errorLinePattern.MatchString(line) {
+		if line == "" || traceNoisePattern.MatchString(line) {
 			continue
 		}
-		out := []string{line}
-		for _, follow := range lines[i+1:] {
-			if len(out) >= n {
-				break
-			}
-			if s := stripANSI(follow); s != "" {
-				out = append(out, s)
-			}
-		}
-		return out
+		meaningful = append(meaningful, line)
 	}
-	return nil
+	if len(meaningful) > n {
+		meaningful = meaningful[len(meaningful)-n:]
+	}
+	return meaningful
+}
+
+// TraceFailureReason returns the runner's own verdict for a failed job
+// ("exit code 127", "system failure: ..."), or "" if the trace has none.
+// Worth surfacing next to the summary — just never *as* the summary.
+func TraceFailureReason(trace string) string {
+	for _, raw := range strings.Split(trace, "\n") {
+		m := jobFailedPattern.FindStringSubmatch(stripANSI(raw))
+		if m == nil {
+			continue
+		}
+		kind, detail := m[1], strings.TrimSpace(m[2])
+		switch {
+		case kind != "" && detail != "":
+			return kind + ": " + detail
+		case kind != "":
+			return kind
+		default:
+			return detail
+		}
+	}
+	return ""
 }
 
 // LogViewer streams one job's trace into a scrollable, ANSI-aware viewport

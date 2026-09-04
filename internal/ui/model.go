@@ -733,7 +733,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A failed fetch is recorded too, not dropped: the panel says why,
 		// which reads very differently from a job that looks like the digest
 		// was never run for it.
-		d := components.JobDigest{Lines: msg.lines}
+		d := components.JobDigest{Lines: msg.lines, Reason: msg.reason}
 		if msg.err != nil {
 			m.digestErrored++
 			d = components.JobDigest{Err: msg.err.Error()}

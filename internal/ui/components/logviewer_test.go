@@ -5,61 +5,6 @@ import (
 	"testing"
 )
 
-func TestFirstErrorLines_ReturnsTheMatchPlusContext(t *testing.T) {
-	trace := "Running with gitlab-runner\nok 1\nFAILED: token_test.go:88\nexpected 200, got 401\nmore context\nand more\n"
-
-	got := FirstErrorLines(trace, 3)
-	want := []string{"FAILED: token_test.go:88", "expected 200, got 401", "more context"}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Errorf("FirstErrorLines = %q, want %q", got, want)
-	}
-}
-
-func TestFirstErrorLines_StripsANSIAndCarriageReturns(t *testing.T) {
-	// Real GitLab traces are full of colour escapes and \r, and this text is
-	// rendered outside a viewport (in a plain table detail panel), so it has
-	// to come back clean.
-	trace := "ok\n\x1b[0;31mERROR: build step failed\x1b[0;m\r\n\x1b[32mdetail line\x1b[0m\r\n"
-
-	got := FirstErrorLines(trace, 2)
-	want := []string{"ERROR: build step failed", "detail line"}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Errorf("FirstErrorLines = %q, want %q", got, want)
-	}
-}
-
-func TestFirstErrorLines_EmptyWhenNothingMatches(t *testing.T) {
-	if got := FirstErrorLines("all clear\nnothing to see\n", 3); len(got) != 0 {
-		t.Errorf("FirstErrorLines = %q, want empty", got)
-	}
-}
-
-func TestFirstErrorLines_SkipsBlankContextLines(t *testing.T) {
-	trace := "panic: boom\n\n\n   \nthe real detail\n"
-
-	got := FirstErrorLines(trace, 2)
-	want := []string{"panic: boom", "the real detail"}
-	if strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Errorf("FirstErrorLines = %q, want %q", got, want)
-	}
-}
-
-func TestFirstErrorLines_StopsAtTheEndOfTheTrace(t *testing.T) {
-	got := FirstErrorLines("fatal: nothing after this\n", 5)
-	if len(got) != 1 || got[0] != "fatal: nothing after this" {
-		t.Errorf("FirstErrorLines = %q, want one line", got)
-	}
-}
-
-func TestFirstErrorLines_MatchesAgainstTheStrippedLine(t *testing.T) {
-	// The word is split by a colour escape in the raw bytes; matching before
-	// stripping would miss it.
-	got := FirstErrorLines("ok\nbuild \x1b[0;31mfailed\x1b[0m here\n", 1)
-	if len(got) != 1 || got[0] != "build failed here" {
-		t.Errorf("FirstErrorLines = %q, want the stripped line", got)
-	}
-}
-
 func TestLogViewer_AppendGrowsContent(t *testing.T) {
 	l := NewLogViewer()
 	l.Open(1)
@@ -130,5 +75,98 @@ func TestLogViewer_OpenResetsBufferForNewJob(t *testing.T) {
 	}
 	if len(l.lines) != 0 || l.content != "" {
 		t.Fatalf("expected empty buffer after Open, got lines=%+v content=%q", l.lines, l.content)
+	}
+}
+
+// The reported failure: nothing in "mvn: command not found" matches
+// error|failed|fatal|panic|exception, so first-match found only GitLab's own
+// trailing "ERROR: Job failed" line and reported the exit code as the cause.
+func TestFailureSummary_FindsACommandNotFoundAtTheTail(t *testing.T) {
+	trace := strings.Join([]string{
+		"Running with gitlab-runner 16.9.0",
+		`Preparing the "docker" executor`,
+		"Getting source from Git repository",
+		"Checking out abc123 as main...",
+		`Executing "step_script" stage of the job script`,
+		"$ mvn clean install",
+		"/bin/bash: line 123: mvn: command not found",
+		"Cleaning up project directory and file based variables",
+		"ERROR: Job failed: exit code 127",
+	}, "\n")
+
+	got := FailureSummary(trace, 3)
+	joined := strings.Join(got, " | ")
+	if !strings.Contains(joined, "mvn: command not found") {
+		t.Fatalf("summary missed the real cause: %q", got)
+	}
+	if strings.Contains(joined, "ERROR: Job failed") {
+		t.Errorf("summary should not report the runner's own epilogue: %q", got)
+	}
+	if strings.Contains(joined, "Cleaning up project directory") {
+		t.Errorf("summary should not report runner boilerplate: %q", got)
+	}
+}
+
+func TestFailureSummary_KeepsTheFailingCommandAsContext(t *testing.T) {
+	trace := "$ ./gradlew build\nsome output\nBUILD FAILED in 3s\nERROR: Job failed: exit code 1"
+	got := FailureSummary(trace, 3)
+	if !strings.Contains(strings.Join(got, " | "), "BUILD FAILED") {
+		t.Fatalf("summary = %q", got)
+	}
+}
+
+func TestFailureSummary_DropsArtifactUploadNoiseAfterTheFailure(t *testing.T) {
+	trace := strings.Join([]string{
+		"$ mvn test",
+		"[ERROR] Tests run: 4, Failures: 1",
+		"Uploading artifacts for failed job",
+		"WARNING: target/surefire-reports/: no matching files",
+		"ERROR: Job failed: exit code 1",
+	}, "\n")
+
+	got := FailureSummary(trace, 3)
+	joined := strings.Join(got, " | ")
+	if !strings.Contains(joined, "Tests run: 4, Failures: 1") {
+		t.Fatalf("summary lost the real failure behind upload noise: %q", got)
+	}
+	if strings.Contains(joined, "no matching files") {
+		t.Errorf("artifact upload warnings are not the cause: %q", got)
+	}
+}
+
+func TestFailureSummary_StripsANSI(t *testing.T) {
+	trace := "$ build\n\x1b[0;31m/bin/sh: gcc: not found\x1b[0m\nERROR: Job failed: exit code 127"
+	got := FailureSummary(trace, 2)
+	for _, l := range got {
+		if strings.Contains(l, "\x1b") {
+			t.Fatalf("escape survived stripping: %q", got)
+		}
+	}
+}
+
+func TestFailureSummary_EmptyTraceYieldsNothing(t *testing.T) {
+	if got := FailureSummary("", 3); len(got) != 0 {
+		t.Errorf("FailureSummary = %q, want empty", got)
+	}
+}
+
+// A trace that is nothing but boilerplate must not come back claiming the
+// runner epilogue is the cause.
+func TestFailureSummary_AllBoilerplateYieldsNothing(t *testing.T) {
+	trace := "Running with gitlab-runner 16.9.0\nCleaning up project directory and file based variables\nERROR: Job failed: exit code 1"
+	if got := FailureSummary(trace, 3); len(got) != 0 {
+		t.Errorf("FailureSummary = %q, want empty", got)
+	}
+}
+
+func TestTraceFailureReason_ExtractsTheExitCode(t *testing.T) {
+	if got := TraceFailureReason("blah\nERROR: Job failed: exit code 127"); got != "exit code 127" {
+		t.Errorf("TraceFailureReason = %q, want %q", got, "exit code 127")
+	}
+	if got := TraceFailureReason("blah\nERROR: Job failed (system failure): pod not found"); got != "system failure: pod not found" {
+		t.Errorf("TraceFailureReason = %q", got)
+	}
+	if got := TraceFailureReason("no verdict here"); got != "" {
+		t.Errorf("TraceFailureReason = %q, want empty", got)
 	}
 }

@@ -895,7 +895,7 @@ func TestPipelineList_DigestViewListsEveryFailedJobAtOnce(t *testing.T) {
 	}
 }
 
-func TestPipelineList_DigestViewReportsATraceThatHadNoErrorLine(t *testing.T) {
+func TestPipelineList_DigestViewReportsATraceWithNoUsableOutput(t *testing.T) {
 	p := NewPipelineList()
 	p.SetSize(120, 30)
 	p.ClearJobs()
@@ -903,8 +903,8 @@ func TestPipelineList_DigestViewReportsATraceThatHadNoErrorLine(t *testing.T) {
 	p.SetJobDigest(10, JobDigest{})
 	p.OpenDigestView()
 
-	if !strings.Contains(p.View(), "no error line") {
-		t.Fatalf("expected an explicit no-match line:\n%s", p.View())
+	if !strings.Contains(p.View(), "no output captured") {
+		t.Fatalf("expected an explicit no-output line:\n%s", p.View())
 	}
 }
 
@@ -1036,5 +1036,28 @@ func TestPipelineList_DebugStateReportsWhatTheDigestDependsOn(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("DebugState missing %q:\n%s", want, got)
 		}
+	}
+}
+
+// The runner's verdict belongs beside the job title, never as the summary:
+// reporting "ERROR: Job failed: exit code 127" as the cause was the whole
+// original bug.
+func TestPipelineList_DigestShowsTheExitCodeBesideTheSummaryNotAsIt(t *testing.T) {
+	p := NewPipelineList()
+	p.SetSize(120, 30)
+	p.ClearJobs()
+	p.AddJobs(api.Pipeline{ID: 1}, []api.Job{{ID: 10, Name: "build", Stage: "build", Status: api.StatusFailed}})
+	p.SetJobDigest(10, JobDigest{
+		Lines:  []string{"$ mvn clean install", "/bin/bash: line 123: mvn: command not found"},
+		Reason: "exit code 127",
+	})
+	p.OpenDigestView()
+
+	view := p.View()
+	if !strings.Contains(view, "mvn: command not found") {
+		t.Fatalf("digest missing the real cause:\n%s", view)
+	}
+	if !strings.Contains(view, "(exit code 127)") {
+		t.Errorf("expected the exit code beside the title:\n%s", view)
 	}
 }

@@ -71,16 +71,21 @@ type FailureDigestRequestMsg struct{}
 // means the fetch itself failed.
 type JobDigest struct {
 	Lines []string
-	Err   string
+	// Reason is the runner's own verdict ("exit code 127"), shown beside
+	// the job title. Never used *as* the summary — "it failed because it
+	// failed" was the original bug.
+	Reason string
+	Err    string
 }
 
 // digestEntry is one row of the failure digest view: a failed job and what
 // its trace said. Built once when the view opens, so the list is stable
 // while you move through it.
 type digestEntry struct {
-	job   api.Job
-	lines []string
-	err   string
+	job    api.Job
+	lines  []string
+	reason string
+	err    string
 	// line is where this entry starts in the rendered buffer, so moving the
 	// cursor can scroll the viewport to it (same approach as LogViewer's
 	// search-match navigation).
@@ -571,7 +576,7 @@ func (p *PipelineList) OpenDigestView() {
 		if !ok {
 			continue
 		}
-		p.digestEntries = append(p.digestEntries, digestEntry{job: j, lines: d.Lines, err: d.Err})
+		p.digestEntries = append(p.digestEntries, digestEntry{job: j, lines: d.Lines, reason: d.Reason, err: d.Err})
 	}
 	p.digestCursor = 0
 	p.mode = modeDigest
@@ -622,6 +627,9 @@ func (p *PipelineList) renderDigest() {
 		} else {
 			title = helpDescStyle.Render(title)
 		}
+		if e.reason != "" {
+			title += helpDescStyle.Render("  (" + e.reason + ")")
+		}
 		b.WriteString(marker + title + "\n")
 		line++
 
@@ -630,7 +638,7 @@ func (p *PipelineList) renderDigest() {
 			b.WriteString(errorTextStyle.Render("    couldn't read the trace: "+e.err) + "\n")
 			line++
 		case len(e.lines) == 0:
-			b.WriteString(helpDescStyle.Render("    no error line found — enter to read the whole log") + "\n")
+			b.WriteString(helpDescStyle.Render("    no output captured — enter to read the whole log") + "\n")
 			line++
 		default:
 			for _, l := range e.lines {

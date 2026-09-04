@@ -211,8 +211,8 @@ func jobsForPipelineCmd(ctx context.Context, client *api.Client, projectID, pipe
 }
 
 // digestLineCount is how many lines of a failed job's trace the digest
-// keeps: the matching line plus two of following context, which is usually
-// where the actual assertion or message sits.
+// keeps — the last few meaningful ones, which is where a build tool prints
+// its diagnosis and where the shell prints its complaint.
 const digestLineCount = 3
 
 // jobDigestCmd reads one failed job's whole trace and keeps only its first
@@ -225,7 +225,12 @@ func jobDigestCmd(ctx context.Context, client *api.Client, projectID, jobID int,
 		if err != nil {
 			return jobDigestMsg{reqID: id, jobID: jobID, err: err}
 		}
-		return jobDigestMsg{reqID: id, jobID: jobID, lines: components.FirstErrorLines(trace, digestLineCount)}
+		return jobDigestMsg{
+			reqID:  id,
+			jobID:  jobID,
+			lines:  components.FailureSummary(trace, digestLineCount),
+			reason: components.TraceFailureReason(trace),
+		}
 	})
 }
 

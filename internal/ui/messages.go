@@ -133,10 +133,11 @@ type jobsLoadedMsg struct {
 // empty when the trace was read but nothing matched, which the panel
 // reports differently from an outright fetch failure.
 type jobDigestMsg struct {
-	reqID reqID
-	jobID int
-	lines []string
-	err   error
+	reqID  reqID
+	jobID  int
+	lines  []string
+	reason string // the runner's own verdict, e.g. "exit code 127"
+	err    error
 }
 
 // jobActionMsg reports the outcome of a retry/cancel on a single job.

@@ -231,11 +231,11 @@ With a dozen failures spread across nine repos, "what actually broke?" shouldn't
 ```
 FAILURE DIGEST — 2 failed job(s), 2 project(s)
 ──────────────────────────────────────────────
-▸ backend/api · test · unit
-    FAILED: src/auth/token_test.go:88
-    expected 200, got 401
+▸ backend/api · build · compile  (exit code 127)
+    $ mvn clean install
+    /bin/bash: line 123: mvn: command not found
 
-  web/portal · test · e2e
+  web/portal · test · e2e  (exit code 1)
     Error: timeout waiting for selector ".btn"
     at login.spec.ts:41
 ──────────────────────────────────────────────
@@ -250,7 +250,11 @@ j/k move · enter open full log · E/esc back to jobs
 
 It runs only when you press `E` — never automatically — so the 10s poll can't turn into a burst of trace requests. Summaries survive polling and `E` toggles straight back into the digest without re-fetching; they're cleared only when you open a different set of jobs. Bridge (trigger) jobs are skipped: GitLab has no trace for one, and the failure worth reading lives in the downstream pipeline's own jobs.
 
-A job whose trace had no recognisable error line says so explicitly rather than appearing blank. The heuristic is the same regex the log viewer's own `E` (jump to first error) uses, so the two never disagree. It matches on the *first* occurrence, which can occasionally land on noise like a dependency whose name contains "error" — `Enter` is one keystroke away when it does.
+**What it shows:** the last few meaningful lines of the trace, with GitLab's runner boilerplate stripped — the setup preamble, the cache/artifact upload that happens *after* the failure, the cleanup notice, and the runner's own `ERROR: Job failed` verdict. That verdict is reported beside the job title as `(exit code 127)`, never as the cause.
+
+The tail is deliberate rather than a search for "error"-looking lines: a build tool prints its diagnosis at the end, and the shell prints its complaint where it happened, so the end of the job script is the answer either way. Matching on error words misses the most ordinary CI failure there is — nothing in `mvn: command not found` contains "error", "failed" or "fatal", so a word-matching digest finds only GitLab's own verdict line and reports every such job as having failed because it failed.
+
+It's still a heuristic: a job that prints a lot after its real failure will push it out of the window. `Enter` opens the full log whenever three lines aren't enough.
 
 Showing jobs from more than one pipeline adds `Project` and `Pipeline` (`#IID`) columns so you can tell which job belongs to which run. The same automatic polling as the pipeline matrix applies here, keyed off the jobs' own statuses rather than the parent pipeline's. `/` works exactly like the pipeline matrix's: it narrows what's already loaded, staged jobs (`x`) stay staged even if a filter later hides them, and `a` (stage/unstage all) respects the active filter.
 
