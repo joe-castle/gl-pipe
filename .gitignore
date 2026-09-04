@@ -3,3 +3,4 @@
 /gl-pipe-*
 *.exe
 config.yaml
+/.idea/
